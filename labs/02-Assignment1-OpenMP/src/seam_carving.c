@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <limits.h>
 #include <omp.h>
 #include <sched.h>
 
@@ -13,6 +14,15 @@
 
 #define COLOR_CHANNELS 0
 #define MAX_FILENAME 255
+#define TRIANGLE_WIDTH 6
+
+static inline int mini(int a, int b) {
+    return (a < b) ? a : b;
+}
+
+static inline float min(float a, float b) {
+    return (a < b) ? a : b;
+}
 
 static inline float min3f(float a, float b, float c) {
     float m = (a < b) ? a : b;
@@ -31,7 +41,7 @@ int getPixel(const unsigned char *image, int width, int height, int cpp, int ch,
 
 void compute_energy(const unsigned char *image, int width, int height, int cpp, float *energy, int use_parallel) {
     int energy_cpp = (cpp >= 3) ? 3 : cpp;
-    #pragma omp parallel for schedule(guided) if(use_parallel)
+    #pragma omp parallel for schedule(static) if(use_parallel)
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             float Ea = 0.0f;
@@ -54,26 +64,160 @@ void compute_energy(const unsigned char *image, int width, int height, int cpp, 
                 Ea += sqrtf((float)(Gx * Gx + Gy * Gy));
             }
 
-            energy[i * width + j] = Ea / (float)energy_cpp;
+            energy[i * width + j] = Ea / (float) energy_cpp;
         }
     }
 }
 
-void accumulate_energy(float *energy, int width, int height) {
-    for (int i = height - 2; i >= 0; i--) {
-        for (int j = 0; j < width; j++) {
-            float bottom = energy[(i + 1) * width + j];
-            float bottomLeft = INFINITY;
-            float bottomRight = INFINITY;
+void accumulate_single(float *energy, int i, int j, int width) {
+    float bottom = energy[(i + 1) * width + j];
+    float bottomLeft = INFINITY;
+    float bottomRight = INFINITY;
 
-            if (j > 0) {
-                bottomLeft = energy[(i + 1) * width + (j - 1)];
-            }
-            if (j < width - 1) {
-                bottomRight = energy[(i + 1) * width + (j + 1)];
-            }
+    if (j > 0) {
+        bottomLeft = energy[(i + 1) * width + (j - 1)];
+    }
+    if (j < width - 1) {
+        bottomRight = energy[(i + 1) * width + (j + 1)];
+    }
 
-            energy[i * width + j] += min3f(bottomLeft, bottom, bottomRight);
+    energy[i * width + j] += min3f(bottomLeft, bottom, bottomRight);
+}
+
+void accumulate_triangle(float *energy, int h, int w, int width, int height,
+                         int triangle_height, int triangle_width,
+                         int is_half, int up) {
+    int start_w = w;
+    const int cell = 4;
+
+    // printf("\n%s triangle: h=%d w=%d height=%d width=%d half=%d\n",
+    //        up ? "UP" : "DOWN", h, w, triangle_height, triangle_width, is_half);
+
+    if (up) {
+        for (int i = h; i > h - triangle_height; i--) {
+            int indent = w - start_w;
+
+            // printf("%3d |", i);
+
+            // for (int s = 0; s < indent; s++) {
+            //     printf("%*s", cell, "");
+            // }
+
+            for (int j = w; j < w + triangle_width; j++) {
+                // printf("%3d ", j);
+
+                if (i >= 0 && i < height - 1 && j >= 0 && j < width) {
+                    accumulate_single(energy, i, j, width);
+                } else {
+                    // printf("X ");
+                }
+            }
+            // printf("\n");
+
+            if (is_half == 1) {
+                triangle_width--;
+            } else {
+                w++;
+                triangle_width -= 2;
+            }
+        }
+    } else {
+        for (int i = h; i < h + triangle_height; i++) {
+            int indent = w - start_w;
+
+            // printf("%3d |", i);
+
+            // for (int s = 0; s < indent; s++) {
+            //     printf("%*s", cell, "");
+            // }
+
+            for (int j = w; j < w + triangle_width; j++) {
+                // printf("%3d ", j);
+
+                if (i >= 0 && i < height - 1 && j >= 0 && j < width) {
+                    accumulate_single(energy, i, j, width);
+                } else {
+                    // printf("X ");
+                }
+            }
+            // printf("\n");
+
+            w++;
+            if (is_half == 1) {
+                triangle_width--;
+            } else {
+                triangle_width -= 2;
+            }
+        }
+    }
+}
+
+void accumulate_energy(float *energy, int width, int height, int use_parallel) {
+    int rows_to_compute = height - 1;
+    if (use_parallel == 0) {
+        for (int i = rows_to_compute - 1; i >= 0; i--) {
+            for (int j = 0; j < width; j++) {
+                accumulate_single(energy, i, j, width);
+            }
+        }
+    } else {
+        int full_triangles = width / TRIANGLE_WIDTH;
+        int rem_width = width % TRIANGLE_WIDTH;
+        int triangle_h = TRIANGLE_WIDTH / 2;
+        int triangle_n = full_triangles + (rem_width > 0 ? 1 : 0);
+        int strips = (rows_to_compute + triangle_h) / (triangle_h + 1);
+        int current_height = height - 2;
+
+        #pragma omp parallel
+        {
+            for (int s = 0; s < strips; s++) {
+                int strip_height = mini(triangle_h, current_height + 1);
+
+                #pragma omp for schedule(static)
+                for (int i = 0; i < triangle_n; i++) {
+                    int start_col;
+                    if (rem_width > 0) {
+                        if (i == 0) start_col = 0;
+                        else start_col = rem_width + (i - 1) * TRIANGLE_WIDTH;
+                    } else {
+                        start_col = i * TRIANGLE_WIDTH;
+                    }
+
+                    int tri_width = (rem_width > 0 && i == 0) ? rem_width : TRIANGLE_WIDTH;
+                    int is_half = (rem_width > 0 && i == 0) ? 1 : 0;
+
+                    accumulate_triangle(energy, current_height, start_col, width, height,
+                                        strip_height, tri_width, is_half, 1);
+                }
+
+                int down_h = current_height - strip_height;
+
+                if (down_h >= 0) {
+                    #pragma omp for schedule(static)
+                    for (int i = 0; i < triangle_n; i++) {
+                        int start_col;
+                        if (rem_width > 0) {
+                            if (i == 0) start_col = 0;
+                            else start_col = rem_width + (i - 1) * TRIANGLE_WIDTH;
+                        } else {
+                            start_col = i * TRIANGLE_WIDTH;
+                        }
+
+                        int tri_width = (rem_width > 0 && i == 0) ? rem_width : TRIANGLE_WIDTH;
+                        int is_half = (rem_width > 0 && i == 0) ? 1 : 0;
+
+                        accumulate_triangle(energy, down_h, start_col, width, height,
+                                            strip_height, tri_width, is_half, 0);
+                    }
+                }
+
+                #pragma omp single
+                {
+                    current_height = down_h - 1;
+                }
+
+                #pragma omp barrier
+            }
         }
     }
 }
@@ -119,7 +263,8 @@ unsigned char *remove_seam(const unsigned char *image, int width, int height, in
     if (out == NULL) {
         return NULL;
     }
-    #pragma omp parallel for schedule(guided) if(use_parallel)
+
+    #pragma omp parallel for schedule(static) if(use_parallel)
     for (int i = 0; i < height; i++) {
         int out_j = 0;
         for (int j = 0; j < width; j++) {
@@ -140,7 +285,7 @@ unsigned char *remove_seam(const unsigned char *image, int width, int height, in
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
-        printf("USAGE: %s input_image output_image [num_pixels]\n", argv[0]);
+        printf("USAGE: %s input_image output_image [num_pixels] [use_parallel]\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -154,7 +299,7 @@ int main(int argc, char *argv[]) {
     if (argc >= 4) {
         char *endptr = NULL;
         long parsed = strtol(argv[3], &endptr, 10);
-        if (*argv[3] == '\0' || *endptr != '\0' || parsed <= 0) {
+        if (*argv[3] == '\0' || *endptr != '\0' || parsed <= 0 || parsed > INT_MAX) {
             printf("Invalid number of pixels to remove: %s\n", argv[3]);
             return EXIT_FAILURE;
         }
@@ -164,10 +309,12 @@ int main(int argc, char *argv[]) {
     int use_parallel = 1;
     if (argc >= 5) {
         char *endptr = NULL;
-        int parsed = strtol(argv[3], &endptr, 10);
-        if (parsed == 0) {
-            use_parallel = 0;
+        long parsed = strtol(argv[4], &endptr, 10);
+        if (*argv[4] == '\0' || *endptr != '\0' || (parsed != 0 && parsed != 1)) {
+            printf("Invalid use_parallel flag: %s (expected 0 or 1)\n", argv[4]);
+            return EXIT_FAILURE;
         }
+        use_parallel = (int)parsed;
     }
 
     int width, height, cpp;
@@ -184,11 +331,13 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Width: %d, Height: %d, Channels: %d\n", width, height, cpp);
-    printf("Removing %d pixels\n", n_pixels);
+    printf("Removing %d pixels from image %s, saving into image %s\n", n_pixels, image_in_name, image_out_name);
+    printf("Parallel: %d\n", use_parallel);
 
     unsigned char *current_image = image_in;
     int current_width = width;
     int current_is_malloc = 0;
+
     double start = omp_get_wtime();
     for (int s = 0; s < n_pixels; s++) {
         float *energy = malloc((size_t)current_width * height * sizeof(float));
@@ -204,7 +353,7 @@ int main(int argc, char *argv[]) {
         }
 
         compute_energy(current_image, current_width, height, cpp, energy, use_parallel);
-        accumulate_energy(energy, current_width, height);
+        accumulate_energy(energy, current_width, height, use_parallel);
         find_seam(energy, current_width, height, seam);
 
         unsigned char *next_image = remove_seam(current_image, current_width, height, cpp, seam, use_parallel);

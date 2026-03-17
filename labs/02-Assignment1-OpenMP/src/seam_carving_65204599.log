@@ -1,0 +1,4 @@
+Width: 3840, Height: 2160, Channels: 3
+Removing 128 pixels from image test_images/3840x2160.png, saving into image test_images/3840x2160-out.png
+Parallel: 1
+Time: 4.629307 s
