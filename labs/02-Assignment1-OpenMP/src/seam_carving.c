@@ -15,9 +15,14 @@
 #define COLOR_CHANNELS 0
 #define MAX_FILENAME 255
 #define TRIANGLE_WIDTH 6
+#define PRINT_TRIANGLES 0
 
 static inline int mini(int a, int b) {
     return (a < b) ? a : b;
+}
+
+static inline int maxi(int a, int b) {
+    return (a > b) ? a : b;
 }
 
 static inline float min(float a, float b) {
@@ -83,36 +88,44 @@ void accumulate_single(float *energy, int i, int j, int width) {
 
     energy[i * width + j] += min3f(bottomLeft, bottom, bottomRight);
 }
-
 void accumulate_triangle(float *energy, int h, int w, int width, int height,
                          int triangle_height, int triangle_width,
-                         int is_half, int up) {
+                         int is_half, int up, int *count) {
     int start_w = w;
     const int cell = 4;
-
-    // printf("\n%s triangle: h=%d w=%d height=%d width=%d half=%d\n",
-    //        up ? "UP" : "DOWN", h, w, triangle_height, triangle_width, is_half);
+    if (PRINT_TRIANGLES == 1) {
+        printf("\n%s triangle: h=%d w=%d height=%d width=%d half=%d\n",
+            up ? "UP" : "DOWN", h, w, triangle_height, triangle_width, is_half);
+    }
 
     if (up) {
-        for (int i = h; i > h - triangle_height; i--) {
+        int i_start = h;
+        int i_end = maxi(h - triangle_height + 1, 0);
+        for (int i = i_start; i >= i_end; i--) {
             int indent = w - start_w;
-
-            // printf("%3d |", i);
-
-            // for (int s = 0; s < indent; s++) {
-            //     printf("%*s", cell, "");
-            // }
-
-            for (int j = w; j < w + triangle_width; j++) {
-                // printf("%3d ", j);
-
-                if (i >= 0 && i < height - 1 && j >= 0 && j < width) {
-                    accumulate_single(energy, i, j, width);
-                } else {
-                    // printf("X ");
+            int j_start = maxi(w, 0);
+            int j_end = mini(w + triangle_width - 1, width - 1);
+            if (PRINT_TRIANGLES == 1) {
+                printf("%3d |", i);
+            }
+            if (PRINT_TRIANGLES == 1) {
+                for (int s = 0; s < indent; s++) {
+                    printf("%*s", cell, "");
                 }
             }
-            // printf("\n");
+
+            for (int j = j_start; j <= j_end; j++) {
+                if (PRINT_TRIANGLES == 1) {
+                    printf("%3d ", j);
+                }
+
+                accumulate_single(energy, i, j, width);
+                #pragma omp atomic
+                (*count)++;
+            }
+            if (PRINT_TRIANGLES == 1) {
+                printf("\n");
+            }
 
             if (is_half == 1) {
                 triangle_width--;
@@ -122,104 +135,144 @@ void accumulate_triangle(float *energy, int h, int w, int width, int height,
             }
         }
     } else {
-        for (int i = h; i < h + triangle_height; i++) {
-            int indent = w - start_w;
+        int i_start = mini(h + triangle_height - 1, height - 2);
+        int i_end = maxi(h, 0);
 
-            // printf("%3d |", i);
+        int row_offset = i_start - h;
+        int cur_w = w + (is_half ? 0 : row_offset);
+        int cur_triangle_width = triangle_width - (is_half ? row_offset : 2 * row_offset);
 
-            // for (int s = 0; s < indent; s++) {
-            //     printf("%*s", cell, "");
-            // }
+        for (int i = i_start; i >= i_end; i--) {
+            int indent = cur_w - start_w;
 
-            for (int j = w; j < w + triangle_width; j++) {
-                // printf("%3d ", j);
+            int j_start = maxi(cur_w, 0);
+            int j_end = mini(cur_w + cur_triangle_width - 1, width - 1);
 
-                if (i >= 0 && i < height - 1 && j >= 0 && j < width) {
-                    accumulate_single(energy, i, j, width);
-                } else {
-                    // printf("X ");
+            if (PRINT_TRIANGLES == 1) {
+                printf("%3d |", i);
+            }
+            if (PRINT_TRIANGLES == 1) {
+                for (int s = 0; s < indent; s++) {
+                    printf("%*s", cell, "");
                 }
             }
-            // printf("\n");
 
-            w++;
+            for (int j = j_start; j <= j_end; j++) {
+                if (PRINT_TRIANGLES == 1) {
+                    printf("%3d ", j);
+                }
+
+                accumulate_single(energy, i, j, width);
+                #pragma omp atomic
+                (*count)++;
+            }
+
+            if (PRINT_TRIANGLES == 1) {
+                printf("\n");
+            }
+
             if (is_half == 1) {
-                triangle_width--;
+                cur_triangle_width++;
             } else {
-                triangle_width -= 2;
+                cur_w--;
+                cur_triangle_width += 2;
             }
         }
     }
 }
 
 void accumulate_energy(float *energy, int width, int height, int use_parallel) {
+    int counter = 0;
+    int *p = &counter;
     int rows_to_compute = height - 1;
     if (use_parallel == 0) {
         for (int i = rows_to_compute - 1; i >= 0; i--) {
+            // printf("Row %d: ", i);
             for (int j = 0; j < width; j++) {
+                // printf("%d ", j);
                 accumulate_single(energy, i, j, width);
+                (*p)++;
             }
+            // printf("\n");
         }
     } else {
-        int full_triangles = width / TRIANGLE_WIDTH;
-        int rem_width = width % TRIANGLE_WIDTH;
         int triangle_h = TRIANGLE_WIDTH / 2;
-        int triangle_n = full_triangles + (rem_width > 0 ? 1 : 0);
+        int triangle_n = (width + TRIANGLE_WIDTH - 1) / TRIANGLE_WIDTH;
         int strips = (rows_to_compute + triangle_h) / (triangle_h + 1);
         int current_height = height - 2;
 
-        #pragma omp parallel
-        {
+        // #pragma omp parallel
+        // {
             for (int s = 0; s < strips; s++) {
+                if (current_height < triangle_h) {
+                    break;
+                }
+
                 int strip_height = mini(triangle_h, current_height + 1);
 
-                #pragma omp for schedule(static)
+                // #pragma omp for schedule(static)
                 for (int i = 0; i < triangle_n; i++) {
-                    int start_col;
-                    if (rem_width > 0) {
-                        if (i == 0) start_col = 0;
-                        else start_col = rem_width + (i - 1) * TRIANGLE_WIDTH;
-                    } else {
-                        start_col = i * TRIANGLE_WIDTH;
-                    }
-
-                    int tri_width = (rem_width > 0 && i == 0) ? rem_width : TRIANGLE_WIDTH;
-                    int is_half = (rem_width > 0 && i == 0) ? 1 : 0;
+                    int start_col = i * TRIANGLE_WIDTH;
+                    int tri_width = TRIANGLE_WIDTH;
+                    int is_half = 0;
 
                     accumulate_triangle(energy, current_height, start_col, width, height,
-                                        strip_height, tri_width, is_half, 1);
+                                        strip_height, tri_width, is_half, 1, p);
                 }
 
                 int down_h = current_height - strip_height;
 
                 if (down_h >= 0) {
-                    #pragma omp for schedule(static)
-                    for (int i = 0; i < triangle_n; i++) {
+                    int down_offset = TRIANGLE_WIDTH / 2;
+                    // #pragma omp for schedule(static)
+                    for (int i = 0; i < triangle_n + 1; i++) {
                         int start_col;
-                        if (rem_width > 0) {
-                            if (i == 0) start_col = 0;
-                            else start_col = rem_width + (i - 1) * TRIANGLE_WIDTH;
+                        int tri_width;
+                        int is_half;
+
+                        if (i == 0) {
+                            start_col = 0;
+                            tri_width = down_offset;
+                            is_half = 1;
                         } else {
-                            start_col = i * TRIANGLE_WIDTH;
+                            start_col = (i - 1) * TRIANGLE_WIDTH + down_offset;
+                            tri_width = TRIANGLE_WIDTH;
+                            is_half = 0;
                         }
 
-                        int tri_width = (rem_width > 0 && i == 0) ? rem_width : TRIANGLE_WIDTH;
-                        int is_half = (rem_width > 0 && i == 0) ? 1 : 0;
-
                         accumulate_triangle(energy, down_h, start_col, width, height,
-                                            strip_height, tri_width, is_half, 0);
+                                            strip_height, tri_width, is_half, 0, p);
                     }
                 }
 
-                #pragma omp single
-                {
+                // #pragma omp single
+                // {
                     current_height = down_h - 1;
-                }
+                // }
 
-                #pragma omp barrier
+                // #pragma omp barrier
             }
-        }
+
+            if (current_height >= 0) {
+                for (int i = current_height; i >= 0; i--) {
+                    if (PRINT_TRIANGLES == 1) {
+                        printf("TOP CLEANUP row %d: ", i);
+                    }
+                    for (int j = 0; j < width; j++) {
+                        if (PRINT_TRIANGLES == 1) {
+                            printf("%d ", j);
+                        }
+                        accumulate_single(energy, i, j, width);
+                        (*p)++;
+                    }
+                    if (PRINT_TRIANGLES == 1) {
+                        printf("\n");
+                    }
+                }
+            }
+        // }
     }
+    // printf("Accumulated pixels %d\n", counter);
 }
 
 void find_seam(const float *energy, int width, int height, int *seam) {

@@ -1,0 +1,4 @@
+Width: 720, Height: 480, Channels: 3
+Removing 128 pixels from image test_images/720x480.png, saving into image test_images/720x480-out-seq.png
+Parallel: 0
+Time: 1.214785 s

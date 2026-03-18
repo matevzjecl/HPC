@@ -1,0 +1,78 @@
+[20260318-13:49:17] Job started
+[20260318-13:49:17] Job ID: 65246755
+[20260318-13:49:17] CPUs per task: 8
+[20260318-13:49:17] OMP_NUM_THREADS=8
+[20260318-13:49:17] Compiling seam_carving.c
+[20260318-13:49:25] Compilation finished
+[20260318-13:49:25] START mode=sequential image=720x480 input=test_images/720x480.png output=test_images/720x480-out-seq.png remove=128
+Width: 720, Height: 480, Channels: 3
+Removing 128 pixels from image test_images/720x480.png, saving into image test_images/720x480-out-seq.png
+Parallel: 0
+Time: 1.217065 s
+[0] elapsed=0:01.39 user=0.01 sys=0.00 maxrss=7168KB
+[20260318-13:49:26] END   mode=sequential image=720x480
+[20260318-13:49:26] START mode=parallel   image=720x480 input=test_images/720x480.png output=test_images/720x480-out.png remove=128
+Width: 720, Height: 480, Channels: 3
+Removing 128 pixels from image test_images/720x480.png, saving into image test_images/720x480-out.png
+Parallel: 1
+Time: 0.397152 s
+[0] elapsed=0:00.57 user=0.00 sys=0.00 maxrss=7168KB
+[20260318-13:49:27] END   mode=parallel   image=720x480
+[20260318-13:49:27] START mode=sequential image=1024x768 input=test_images/1024x768.png output=test_images/1024x768-out-seq.png remove=128
+Width: 1024, Height: 768, Channels: 3
+Removing 128 pixels from image test_images/1024x768.png, saving into image test_images/1024x768-out-seq.png
+Parallel: 0
+Time: 2.846055 s
+[0] elapsed=0:03.15 user=0.01 sys=0.00 maxrss=6144KB
+[20260318-13:49:30] END   mode=sequential image=1024x768
+[20260318-13:49:30] START mode=parallel   image=1024x768 input=test_images/1024x768.png output=test_images/1024x768-out.png remove=128
+Width: 1024, Height: 768, Channels: 3
+Removing 128 pixels from image test_images/1024x768.png, saving into image test_images/1024x768-out.png
+Parallel: 1
+Time: 0.927053 s
+[0] elapsed=0:01.24 user=0.01 sys=0.00 maxrss=6144KB
+[20260318-13:49:31] END   mode=parallel   image=1024x768
+[20260318-13:49:31] START mode=sequential image=1920x1200 input=test_images/1920x1200.png output=test_images/1920x1200-out-seq.png remove=128
+Width: 1920, Height: 1200, Channels: 3
+Removing 128 pixels from image test_images/1920x1200.png, saving into image test_images/1920x1200-out-seq.png
+Parallel: 0
+Time: 8.586201 s
+[0] elapsed=0:08.94 user=0.01 sys=0.00 maxrss=6144KB
+[20260318-13:49:40] END   mode=sequential image=1920x1200
+[20260318-13:49:40] START mode=parallel   image=1920x1200 input=test_images/1920x1200.png output=test_images/1920x1200-out.png remove=128
+Width: 1920, Height: 1200, Channels: 3
+Removing 128 pixels from image test_images/1920x1200.png, saving into image test_images/1920x1200-out.png
+Parallel: 1
+Time: 2.820985 s
+[0] elapsed=0:03.18 user=0.01 sys=0.00 maxrss=7168KB
+[20260318-13:49:44] END   mode=parallel   image=1920x1200
+[20260318-13:49:44] START mode=sequential image=3840x2160 input=test_images/3840x2160.png output=test_images/3840x2160-out-seq.png remove=128
+Width: 3840, Height: 2160, Channels: 3
+Removing 128 pixels from image test_images/3840x2160.png, saving into image test_images/3840x2160-out-seq.png
+Parallel: 0
+Time: 31.472811 s
+[0] elapsed=0:32.69 user=0.01 sys=0.00 maxrss=7168KB
+[20260318-13:50:16] END   mode=sequential image=3840x2160
+[20260318-13:50:16] START mode=parallel   image=3840x2160 input=test_images/3840x2160.png output=test_images/3840x2160-out.png remove=128
+Width: 3840, Height: 2160, Channels: 3
+Removing 128 pixels from image test_images/3840x2160.png, saving into image test_images/3840x2160-out.png
+Parallel: 1
+Time: 10.286426 s
+[0] elapsed=0:11.50 user=0.00 sys=0.00 maxrss=7168KB
+[20260318-13:50:28] END   mode=parallel   image=3840x2160
+[20260318-13:50:28] START mode=sequential image=7680x4320 input=test_images/7680x4320.png output=test_images/7680x4320-out-seq.png remove=128
+Width: 7680, Height: 4320, Channels: 3
+Removing 128 pixels from image test_images/7680x4320.png, saving into image test_images/7680x4320-out-seq.png
+Parallel: 0
+Time: 129.162848 s
+[0] elapsed=2:13.38 user=0.01 sys=0.00 maxrss=7168KB
+[20260318-13:52:41] END   mode=sequential image=7680x4320
+[20260318-13:52:41] START mode=parallel   image=7680x4320 input=test_images/7680x4320.png output=test_images/7680x4320-out.png remove=128
+Width: 7680, Height: 4320, Channels: 3
+Removing 128 pixels from image test_images/7680x4320.png, saving into image test_images/7680x4320-out.png
+Parallel: 1
+Time: 41.960856 s
+[0] elapsed=0:46.17 user=0.00 sys=0.00 maxrss=7168KB
+[20260318-13:53:27] END   mode=parallel   image=7680x4320
+[20260318-13:53:27] Job finished
+[20260318-13:53:27] Detailed run log saved to seam_carving_runs_65246755_20260318-134917.log

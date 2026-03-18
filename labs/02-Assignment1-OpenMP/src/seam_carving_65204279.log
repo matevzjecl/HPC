@@ -1,4 +1,0 @@
-Width: 1920, Height: 1200, Channels: 3
-Removing 128 pixels from image test_images/1920x1200.png, saving into image test_images/1920x1200-out.png
-Parallel: 1
-Time: 1.476383 s

@@ -19,4 +19,4 @@ module load numactl
 gcc -O3 -lm -lnuma --openmp seam_carving.c -o seam_carving
 
 # Run
-srun seam_carving test_images/720x480.png test_images/720x480-out.png 300 1
+srun seam_carving test_images/720x480.png test_images/7680x4320-out.png 128 1

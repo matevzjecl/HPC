@@ -1,0 +1,4 @@
+Width: 7680, Height: 4320, Channels: 3
+Removing 128 pixels from image test_images/7680x4320.png, saving into image test_images/7680x4320-out.png
+Parallel: 0
+Time: 129.224818 s
