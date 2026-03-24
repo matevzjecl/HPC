@@ -61,4 +61,9 @@ dkms.conf
 # User-specific
 .DS_Store
 
-.log
+*.log
+
+logs
+output_images
+slurm
+summaries
