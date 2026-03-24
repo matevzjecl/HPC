@@ -1,4 +1,0 @@
-Width: 1024, Height: 768, Channels: 3
-Removing 128 pixels from image test_images/1024x768.png, saving into image test_images/1024x768-out-seq.png
-Parallel: 0
-Time: 2.836079 s
