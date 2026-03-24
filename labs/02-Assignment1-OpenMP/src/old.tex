@@ -1,0 +1,139 @@
+%$\documentclass[9pt]{IEEEtran}
+\documentclass[9pt,onecolumn]{IEEEtran}
+\usepackage[english]{babel}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{xcolor}
+\usepackage{mdframed}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{fancyhdr}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{amssymb}
+\usepackage{url}
+\usepackage{array}
+\usepackage{textcomp}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{float}
+\usepackage{gensymb}
+\usepackage{longtable}
+\usepackage{supertabular}
+\usepackage{multicol}
+\usepackage{booktabs}
+\usepackage[utf8x]{inputenc}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\input{glyphtounicode}
+\pdfgentounicode=1
+
+\graphicspath{{./figures/}}
+\DeclareGraphicsExtensions{.pdf,.png,.jpg,.eps}
+
+% correct bad hyphenation here
+\hyphenation{op-tical net-works semi-conduc-tor trig-gs}
+
+
+% ============================================================================================
+\title{\vspace{0ex} Assignment 1: Seam carving}
+
+\author{Matevž Jecl, Kristjan Volk\vspace{-4.0ex}}
+
+% ============================================================================================
+\begin{document}
+
+\maketitle
+\markboth{}{}
+\thispagestyle{plain}
+\section{\textbf{Introduction}}
+Seam carving is an image processing technique that resizes images by removing  paths of least visual importance, called seams. It preserves important content by analyzing pixel energy and avoiding distortion of key features while adjusting the image’s dimensions.
+
+\section{\textbf{Code implementation}}
+Firstly we compute the energy. Every pixel is scored using the Sobel filter, which measures how sharply colours change in its neighbourhood. Secondly we accumulate the energy. Each cell is updated with the minimum cumulative cost of the three cells below it. After we trace the seam starting from the minimum cost cell in the top row and follow the cheapest neighboor downword through each row to recover the full seam path. Finally we remove the seam by shifting the pixel to the left.
+\begin{algorithm}[H]
+\caption{Seam Carving --- Main Loop}
+\begin{algorithmic}[1]
+\For{$s = 1$ to $n\_pixels$}
+    \State \textbf{compute\_energy}$(I)$ \Comment{Sobel gradients per pixel}
+    \State \textbf{accumulate\_energy}$(E)$ \Comment{DP: propagate costs upward}
+    \State \textbf{find\_seam}$(M)$ \Comment{Greedy traceback from top row}
+    \State $I \leftarrow$ \textbf{remove\_seam}$(I,\, \text{seam})$ \Comment{Shift pixels, width shrinks by 1}
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+\pagestyle{plain}
+\section{\textbf{Testing}}
+We ran our algorithm with various numbers of threads, to be precise with the next sequence 1, 2, 4, 8, 16 and 32 of threads for each of the thread we ran our algorithm 5 times (parallel and sequential). The results are show in the table below.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{6}{c}{Number of threads (Sequential (s) / Parallel (s) )} \\
+\cmidrule(lr){1-7}
+ & 1 & 2 & 4 & 8 & 16 & 32 \\
+\midrule
+720x480
+& 1.22 / 1.43 & 1.22 / 0.84 & 1.21 / 0.54 
+& 1.21 / 0.39 & 1.21 / 0.32 & 1.22 / 0.29 \\
+
+1024x768
+& 2.84 / 3.35 & 2.85 / 1.96 & 2.85 / 1.26 
+& 2.83 / 0.92 & 2.84 / 0.75 & 2.84 / 0.67 \\
+
+1920x1200
+& 8.59 / 10.10 & 8.59 / 5.93 & 8.58 / 3.82 
+& 8.56 / 2.79 & 8.57 / 2.28 & 8.58 / 2.07 \\
+
+3840x2160
+& 31.49 / 36.99 & 31.45 / 21.69 & 31.48 / 14.01 
+& 31.34 / 10.22 & 31.39 / 8.36 & 31.47 / 7.38 \\
+
+7680x4320
+& 129.32 / 151.57 & 129.37 / 88.78 & 129.67 / 57.41 
+& 128.97 / 41.66 & 128.92 / 35.18 & 129.10 / 30.34 \\
+
+\bottomrule
+\end{tabular}
+\caption{Average values for sequential and parallel algorithm that we ran 5 times for each thread}
+\end{table}
+
+As we can see from the table above the sequential implementation is consistant through all execution times. The parallel implementation initially performs worse, but with increasing the number of threads we can see a significant performance improvements. Everytime we increased the number of threads the results became better. Also larger images benefit more from parallelization, this can be seen for the image example of size 7680x4320. The next table shows average times for sequential and parallel algorithm we also included the speedup factor. We took all five runs for all the number of the threads we used and grouped the runs by the test images that we used.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Image & Avg sequential (s) & Avg parallel (s) & Speedup\\
+\midrule
+720x480 & 1.22 & 0.64 & 1.91 \\
+1024x768 & 2.84 & 1.49 & 1.91 \\
+1920x1200 & 8.58 & 4.50 & 1.91 \\
+3840x2160 & 31.44 & 16.44 & 1.91 \\
+7680x4320 & 129.23 & 67.49 & 1.91 \\
+\bottomrule
+\end{tabular}
+\caption{Average sequential and parallel execution times throughout all the runs with speedup}
+\end{table}
+
+As stated before we can see significant improvement by using the parallel version of the algorithm provided we don't use a single thread. Also from the table above we can see the speedup factor is for all the images the same being 1.91. The speedup factor is calculated by using the formula $S = t_s/t_p$, where $t_s$ represents the time the algorithm ran in sequential mode (in seconds) and $t_p$ represents the time the algorithm ran in parallel mode (in seconds).
+\section{\textbf{Conclusion}}
+In this assignment we implemented the seam carving algorithm. We also implemented the improved version of energy accumulation step using a triangular wavefront decomposition. Rather than processing rows one at a time, the grid is tiled into interleaved up- and down-pointing triangles, allowing independent tiles to be processed concurrently across threads. The results confirm the effectiveness of these improvements. As shown in the tables, the sequential implementation runs consistently regardless of thread count, while the parallel version scales clearly with both thread count and image size. Larger images benefit the most from parallelisation, with the 7680×4320 image going from 129.23s sequentially down to 30.34s at 32 threads. Averaged across all image sizes and thread counts, the parallel implementation achieves a speedup factor of 1.91 over the sequential baseline.
+One limitation worth noting is that the energy map is recomputed from scratch after each seam removal. An incremental update strategy — recomputing only the columns adjacent to the removed seam — would reduce redundant work and could further improve performance in future iterations.
+Overall, the parallel seam carving implementation demonstrates meaningful real-world speedups, particularly for high-resolution images where the computational cost of repeated energy accumulation is most significant.
+
+
+\bibliographystyle{IEEEtran}
+\bibliography{bibliography}
+
+\end{document}
