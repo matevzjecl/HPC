@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 #include "lenia.h"
 #include "orbium.h"
 #include "gifenc.h"
@@ -10,7 +11,7 @@
 // #include <cuda.h>
 
 // Uncomment to generate gif animation
-//#define GENERATE_GIF
+// #define GENERATE_GIF
 
 // For prettier indexing syntax
 #define w(r, c) (w[(r) * w_cols + (c)])
@@ -65,6 +66,31 @@ double *generate_kernel(double *K, const unsigned int size)
     return K;
 }
 
+// Generate active mask from nonzero cells and their kernel neighborhood
+void generate_mask(const double *world, double *active, unsigned int rows, unsigned int cols, unsigned int kernel_size)
+{
+    for (unsigned int i = 0; i < rows; i++)
+    {
+        for (unsigned int j = 0; j < cols; j++)
+        {
+            if (world[i * cols + j] > 0.0)
+            {
+                int r = kernel_size / 2;
+                for (int di = -r; di < r; di++)
+                {
+                    for (int dj = -r; dj < r; dj++)
+                    {
+                        int ii = (i + di + rows) % rows;
+                        int jj = (j + dj + cols) % cols;
+                        if (di * di + dj * dj <= r * r)
+                            active[ii * cols + jj] = 1.0;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Function to perform convolution on input using kernel w
 // Note that the kernel is flipped for convolution as per definition, and we use modular indexing for toroidal world
 inline double *convolve2d(double *result, const double *input, const double *w, const unsigned int rows, const unsigned int cols, const unsigned int w_rows, const unsigned int w_cols)
@@ -90,15 +116,44 @@ inline double *convolve2d(double *result, const double *input, const double *w, 
     return result;
 }
 
+// Function to perform convolution only on active cells
+inline double *convolve2d_map(double *result, const double *input, const double *w, const unsigned int rows, const unsigned int cols, const unsigned int w_rows, const unsigned int w_cols, double *active)
+{
+    if (result != NULL && input != NULL && w != NULL && active != NULL)
+    {
+        for (unsigned int i = 0; i < rows; i++)
+        {
+            for (unsigned int j = 0; j < cols; j++)
+            {
+                if (active[i * cols + j] == 0.0)
+                {
+                    result[i * cols + j] = 0.0;
+                    continue;
+                }
+
+                double sum = 0;
+                for (int ki = w_rows - 1, kri = 0; ki >= 0; ki--, kri++)
+                {
+                    for (int kj = w_cols - 1, kcj = 0; kj >= 0; kj--, kcj++)
+                    {
+                        sum += w(ki, kj) * input((i - w_rows / 2 + rows + kri), (j - w_cols / 2 + cols + kcj));
+                    }
+                }
+                result[i * cols + j] = sum;
+            }
+        }
+    }
+    return result;
+}
+
 // Function to evolve Lenia
 double *evolve_lenia(const unsigned int rows, const unsigned int cols, const unsigned int steps, const double dt, const unsigned int kernel_size, const struct orbium_coo *orbiums, const unsigned int num_orbiums)
 {
-
 #ifdef GENERATE_GIF
     ge_GIF *gif = ge_new_gif(
         "lenia.gif",     /* file name */
         cols, rows,      /* canvas size */
-        inferno_pallete, /*pallete*/
+        inferno_pallete, /* pallete */
         8,               /* palette depth == log2(# of colors) */
         -1,              /* no transparency */
         0                /* infinite loop */
@@ -109,9 +164,10 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols, const uns
     double *w = (double *)calloc(kernel_size * kernel_size, sizeof(double));
     double *world = (double *)calloc(rows * cols, sizeof(double));
     double *tmp = (double *)calloc(rows * cols, sizeof(double));
+    double *active = (double *)calloc(rows * cols, sizeof(double));
 
     // Generate convolution kernel
-    w=generate_kernel(w,kernel_size);
+    w = generate_kernel(w, kernel_size);
 
     // Place orbiums
     for (unsigned int o = 0; o < num_orbiums; o++)
@@ -122,29 +178,36 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols, const uns
     // Lenia Simulation
     for (unsigned int step = 0; step < steps; step++)
     {
-        // Convolution
-        tmp = convolve2d(tmp, world, w, rows, cols, kernel_size, kernel_size);
-        
+        memset(active, 0, rows * cols * sizeof(*active));
+        generate_mask(world, active, rows, cols, kernel_size);
+
+        // Convolution only on active map
+        tmp = convolve2d_map(tmp, world, w, rows, cols, kernel_size, kernel_size, active);
+
         // Evolution
         for (unsigned int i = 0; i < rows; i++)
         {
             for (unsigned int j = 0; j < cols; j++)
             {
-                world[i * rows + j] += dt * growth_lenia(tmp[i * rows + j]);
-                world[i * rows + j] = fmin(1, fmax(0, world[i * rows + j])); // Clip between 0 and 1
+                world[i * cols + j] += dt * growth_lenia(tmp[i * cols + j]);
+                world[i * cols + j] = fmin(1, fmax(0, world[i * cols + j])); // Clip between 0 and 1
 #ifdef GENERATE_GIF
-                gif->frame[i * rows + j] = world[i * rows + j] * 255;
+                gif->frame[i * cols + j] = world[i * cols + j] * 255;
 #endif
             }
         }
+
 #ifdef GENERATE_GIF
         ge_add_frame(gif, 5);
 #endif
     }
+
 #ifdef GENERATE_GIF
     ge_close_gif(gif);
 #endif
+
     free(w);
     free(tmp);
+    free(active);
     return world;
 }

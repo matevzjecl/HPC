@@ -2,7 +2,7 @@
 #SBATCH --reservation=fri
 #SBATCH --job-name=seam_bench
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=32
 #SBATCH --hint=nomultithread
 #SBATCH --output=slurm/%x_%j.log
 
@@ -14,8 +14,8 @@ set -euo pipefail
 IMG="test_images/720x480.png"
 REMOVE_PIXELS=128
 PAR=1
-USE_TRI=0
-TRI_N=0
+USE_TRI=1
+TRI_N=64
 RUNS=10
 
 export OMP_PLACES=cores

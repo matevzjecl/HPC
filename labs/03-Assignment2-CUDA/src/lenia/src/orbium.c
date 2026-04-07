@@ -1,4 +1,6 @@
 #include <stdlib.h>
+#include <omp.h>
+
 #include "orbium.h"
 
 uint8_t inferno_pallete[] = {/* palette */

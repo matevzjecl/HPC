@@ -5,18 +5,19 @@ CC = nvcc
 LDLIBS = -lm
 CFLAGS = -Wno-deprecated-gpu-targets -gencode=arch=compute_70,code=sm_70 -O3 -Xcompiler --openmp,-Wall
 
-SRC=src
+SRC = src
 
 # Source files
-SRCS=$(wildcard $(SRC)/*.cu)
-SRCS+=$(wildcard $(SRC)/*.c)
+SRCS_CU = $(wildcard $(SRC)/*.cu)
+SRCS_C  = $(filter-out $(SRC)/lenia.c, $(wildcard $(SRC)/*.c))
+SRCS    = $(SRCS_CU) $(SRCS_C)
 
 # Header files
 HDRS = $(wildcard $(SRC)/*.h)
 
 # Object files
 OBJS_1 = $(SRCS:$(SRC)/%.c=%.o)
-OBJS = $(OBJS_1:$(SRC)/%.cu=%.o)
+OBJS   = $(OBJS_1:$(SRC)/%.cu=%.o)
 
 # Executable name
 TARGET = lenia.out
@@ -31,6 +32,7 @@ $(TARGET): $(OBJS)
 
 %.o: $(SRC)/%.c $(HDRS)
 	$(CC) $(CFLAGS) -c -o $@ $<
+
 # Clean
 clean:
 	rm -f $(OBJS) $(TARGET)
