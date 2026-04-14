@@ -33,7 +33,7 @@ static inline double *convolve2d(double *result, const double *input, const doub
 {
     if (result != NULL && input != NULL && w != NULL)
     {
-        // #pragma omp parallel for
+        #pragma omp parallel for
         for (unsigned int i = 0; i < rows; i++)
         {
             for (unsigned int j = 0; j < cols; j++)
@@ -59,7 +59,7 @@ static inline double *convolve2d_map(double *result, const double *input, const 
 {
     if (result != NULL && input != NULL && w != NULL)
     {
-        // #pragma omp parallel for schedule(static,1)
+        #pragma omp parallel for schedule(static,1)
         for (unsigned int i = 0; i < rows; i++)
         {
             for (unsigned int j = 0; j < cols; j++)
@@ -188,14 +188,14 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols, const uns
     // Lenia Simulation
     for (unsigned int step = 0; step < steps; step++)
     {
-        // memset(active, 0, rows * cols * sizeof(*active));
-        // generate_mask(world, active, rows, cols, kernel_size);
+        memset(active, 0, rows * cols * sizeof(*active));
+        generate_mask(world, active, rows, cols, kernel_size);
         // Convolution
-        // tmp = convolve2d_map(tmp, world, w, rows, cols, kernel_size, kernel_size, active);
-        tmp = convolve2d(tmp, world, w, rows, cols, kernel_size, kernel_size);
+        tmp = convolve2d_map(tmp, world, w, rows, cols, kernel_size, kernel_size, active);
+        // tmp = convolve2d(tmp, world, w, rows, cols, kernel_size, kernel_size);
 
         // Evolution
-        // #pragma omp parallel for
+        #pragma omp parallel for
         for (unsigned int i = 0; i < rows; i++)
         {
             for (unsigned int j = 0; j < cols; j++)

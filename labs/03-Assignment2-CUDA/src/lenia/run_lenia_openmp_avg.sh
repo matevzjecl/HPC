@@ -3,7 +3,7 @@
 #SBATCH --reservation=fri
 #SBATCH --job-name=lenia_omp
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=32
 #SBATCH --nodes=1
 #SBATCH --hint=nomultithread
 #SBATCH --output=logs/%x_%j.log
@@ -18,8 +18,17 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export OMP_PLACES=cores
 export OMP_PROC_BIND=close
 
+# Unique executable for this job
+EXE="lenia_${SLURM_JOB_ID}"
+
+# Cleanup on exit
+cleanup() {
+    rm -f "$EXE"
+}
+trap cleanup EXIT
+
 # BUILD
-gcc -O3 -lm -lnuma --openmp src/*.c -o lenia
+gcc -O3 -fopenmp src/*.c -o "$EXE" -lm -lnuma
 
 # RUN 5 times and average the reported execution time
 runs=5
@@ -28,7 +37,7 @@ sum=0
 for i in $(seq 1 $runs); do
     echo "===== Run $i / $runs ====="
 
-    run_output=$(srun ./lenia)
+    run_output=$(srun ./"$EXE")
 
     echo "$run_output"
 

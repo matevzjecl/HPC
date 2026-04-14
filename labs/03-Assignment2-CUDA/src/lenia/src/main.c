@@ -52,7 +52,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "Use a positive value where block_size * block_size <= 1024\n");
         return 1;
     }
-
+    printf("CUDA world size: %d x %d\n", N, N);
     printf("CUDA block size: %d x %d\n", block_size, block_size);
     double start = omp_get_wtime();
     // Run the simulation

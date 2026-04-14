@@ -7,35 +7,44 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus=1
 #SBATCH --nodes=1
-#SBATCH --output=logs/%x_%j.log
 
 set -euo pipefail
 
-mkdir -p logs
+mkdir -p results
 
-# LOAD MODULES
 module load CUDA
 
-# BUILD
-make clean
+SNAPDIR="$PWD"
+WORKDIR="${TMPDIR:-/tmp}/lenia_cuda_${SLURM_JOB_ID}"
+RESULTS_OUT="$SNAPDIR/results/block_sweep_results_${SLURM_JOB_ID}.csv"
+
+mkdir -p "$WORKDIR"
+
+cleanup() {
+    rm -rf "$WORKDIR"
+}
+trap cleanup EXIT
+
+cp "$SNAPDIR/Makefile" "$WORKDIR"/
+cp -r "$SNAPDIR/src" "$WORKDIR"/
+
+cd "$WORKDIR"
+
+make clean || true
 make
 
-# Sweep square CUDA block sizes: bs x bs
 block_sizes=(4 8 12 16 20 24 28 32)
-
-# RUN each block size 5 times and average the reported execution time
 runs=5
 
 best_bs=""
 best_avg=""
 
-results_file="block_sweep_results.csv"
+results_file="block_sweep_results_${SLURM_JOB_ID}.csv"
 echo "block_size,average_time" > "$results_file"
 
 for bs in "${block_sizes[@]}"; do
-    # Safety check for square blocks
     if (( bs * bs > 1024 )); then
-        echo "Skipping invalid block size ${bs}x${bs} (${bs}*${bs} > 1024 threads)"
+        echo "Skipping invalid block size ${bs}x${bs}"
         continue
     fi
 
@@ -48,13 +57,9 @@ for bs in "${block_sizes[@]}"; do
     for i in $(seq 1 $runs); do
         echo "===== Run $i / $runs for block size ${bs}x${bs} ====="
 
-        # Pass block size as argv[1]
         run_output=$(srun ./lenia.out "$bs")
-
-        # Print full output to log
         echo "$run_output"
 
-        # Extract the numeric value from: Execution time: 20.313
         time_val=$(echo "$run_output" | awk -F': ' '/Execution time:/ {print $2}' | tail -n 1)
 
         if [ -z "$time_val" ]; then
@@ -63,12 +68,10 @@ for bs in "${block_sizes[@]}"; do
         fi
 
         echo "Parsed execution time for run $i: $time_val"
-
         sum=$(awk -v s="$sum" -v t="$time_val" 'BEGIN {printf "%.6f", s + t}')
     done
 
     avg=$(awk -v s="$sum" -v r="$runs" 'BEGIN {printf "%.6f", s / r}')
-
     echo "Average execution time for ${bs}x${bs}: $avg"
     echo "${bs},${avg}" | tee -a "$results_file"
 
@@ -78,7 +81,10 @@ for bs in "${block_sizes[@]}"; do
     fi
 done
 
+cp "$results_file" "$RESULTS_OUT"
+
 echo "===== Sweep Summary ====="
 cat "$results_file"
 echo "Best block size: ${best_bs}x${best_bs}"
 echo "Best average execution time: $best_avg"
+echo "Saved results to: $RESULTS_OUT"
