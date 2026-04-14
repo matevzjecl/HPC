@@ -7,8 +7,7 @@
 #include <string.h>
 
 // Uncomment to generate gif animation
-#define GENERATE_GIF
-#define USE_PARALLEL 1
+// #define GENERATE_GIF
 
 // For prettier indexing syntax
 #define w(r, c) (w[(r) * w_cols + (c)])
@@ -34,7 +33,7 @@ static inline double *convolve2d(double *result, const double *input, const doub
 {
     if (result != NULL && input != NULL && w != NULL)
     {
-        #pragma omp parallel for if(USE_PARALLEL)
+        // #pragma omp parallel for
         for (unsigned int i = 0; i < rows; i++)
         {
             for (unsigned int j = 0; j < cols; j++)
@@ -56,16 +55,16 @@ static inline double *convolve2d(double *result, const double *input, const doub
 
 // Function to perform convolution on input using kernel w
 // Note that the kernel is flipped for convolution as per definition, and we use modular indexing for toroidal world
-static inline double *convolve2d_map(double *result, const double *input, const double *w, const unsigned int rows, const unsigned int cols, const unsigned int w_rows, const unsigned int w_cols, double *active)
+static inline double *convolve2d_map(double *result, const double *input, const double *w, const unsigned int rows, const unsigned int cols, const unsigned int w_rows, const unsigned int w_cols, const unsigned char *active)
 {
     if (result != NULL && input != NULL && w != NULL)
     {
-        #pragma omp parallel for
+        // #pragma omp parallel for schedule(static,1)
         for (unsigned int i = 0; i < rows; i++)
         {
             for (unsigned int j = 0; j < cols; j++)
             {
-                if (active[i * cols + j] == 0) {
+                if (!active[i * cols + j]) {
                     result[i * cols + j] = 0.0;
                     continue;
                 }
@@ -128,23 +127,31 @@ void print_world(const double* world, unsigned int rows, unsigned int cols) {
     }
 }
 
-void generate_mask(const double* world, double* active, unsigned int rows, unsigned int cols, unsigned int kernel_size) {
+
+void generate_mask(const double* world, unsigned char* active,
+                   unsigned int rows, unsigned int cols,
+                   unsigned int kernel_size)
+{
+    int r = (int)kernel_size / 2;
+
+    #pragma omp parallel for
     for (unsigned int i = 0; i < rows; i++) {
         for (unsigned int j = 0; j < cols; j++) {
             if (world[i * cols + j] > 0.0) {
-                int r = kernel_size / 2;
                 for (int di = -r; di < r; di++) {
                     for (int dj = -r; dj < r; dj++) {
-                        int ii = (i + di + rows) % rows;
-                        int jj = (j + dj + cols) % cols;
-                        if (di*di + dj*dj <= r*r)
+                        if (di * di + dj * dj <= r * r) {
+                            int ii = ((int)i + di + (int)rows) % (int)rows;
+                            int jj = ((int)j + dj + (int)cols) % (int)cols;
+
+                            #pragma omp atomic write
                             active[ii * cols + jj] = 1;
+                        }
                     }
                 }
             }
         }
     }
-
 }
 
 // Function to evolve Lenia
@@ -153,7 +160,7 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols, const uns
 
 #ifdef GENERATE_GIF
     ge_GIF *gif = ge_new_gif(
-        "lenia.gif",     /* file name */
+        "lenia_cpu.gif",     /* file name */
         cols, rows,      /* canvas size */
         inferno_pallete, /*pallete*/
         8,               /* palette depth == log2(# of colors) */
@@ -166,7 +173,7 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols, const uns
     double *world = (double *)calloc(rows * cols, sizeof(double));
     double *tmp = (double *)calloc(rows * cols, sizeof(double));
     double *w = (double *)calloc(kernel_size * kernel_size, sizeof(double));
-    double *active = (double *)calloc(rows * cols, sizeof(double));
+    unsigned char *active = (unsigned char *)calloc(rows * cols, sizeof(unsigned char));
 
     w=generate_kernel(w,kernel_size);
 
@@ -181,14 +188,14 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols, const uns
     // Lenia Simulation
     for (unsigned int step = 0; step < steps; step++)
     {
-        memset(active, 0, rows * cols * sizeof(*active));
-        generate_mask(world, active, rows, cols, kernel_size);
+        // memset(active, 0, rows * cols * sizeof(*active));
+        // generate_mask(world, active, rows, cols, kernel_size);
         // Convolution
-        tmp = convolve2d_map(tmp, world, w, rows, cols, kernel_size, kernel_size, active);
-        // tmp = convolve2d(tmp, world, w, rows, cols, kernel_size, kernel_size);
+        // tmp = convolve2d_map(tmp, world, w, rows, cols, kernel_size, kernel_size, active);
+        tmp = convolve2d(tmp, world, w, rows, cols, kernel_size, kernel_size);
 
         // Evolution
-        #pragma omp parallel for if(USE_PARALLEL)
+        // #pragma omp parallel for
         for (unsigned int i = 0; i < rows; i++)
         {
             for (unsigned int j = 0; j < cols; j++)

@@ -2,7 +2,7 @@
 
 #SBATCH --reservation=fri
 #SBATCH --partition=gpu
-#SBATCH --job-name=lenia
+#SBATCH --job-name=lenia_cuda
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus=1

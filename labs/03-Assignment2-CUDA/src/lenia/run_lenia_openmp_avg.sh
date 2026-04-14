@@ -3,7 +3,7 @@
 #SBATCH --reservation=fri
 #SBATCH --job-name=lenia_omp
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=1
 #SBATCH --nodes=1
 #SBATCH --hint=nomultithread
 #SBATCH --output=logs/%x_%j.log

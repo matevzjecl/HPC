@@ -15,12 +15,9 @@
 // Uncomment only for visualization, not for benchmarking
 // #define GENERATE_GIF
 
-#define SHARED_ACTIVE 1
-
-#define MAX_KERNEL_AREA 1024
-
-__constant__ double d_w_const[MAX_KERNEL_AREA];
-
+// -----------------------------------------------------------------------------
+// Math helpers
+// -----------------------------------------------------------------------------
 __host__ __device__ static inline double gauss(double x, double mu, double sigma)
 {
     return exp(-0.5 * ((x - mu) / sigma) * ((x - mu) / sigma));
@@ -33,6 +30,9 @@ __device__ static inline double growth_lenia(double u)
     return -1.0 + 2.0 * gauss(u, mu, sigma);
 }
 
+// -----------------------------------------------------------------------------
+// Host kernel generation
+// -----------------------------------------------------------------------------
 double *generate_kernel(double *K, const unsigned int size)
 {
     const double mu = 0.5;
@@ -71,47 +71,17 @@ double *generate_kernel(double *K, const unsigned int size)
     return K;
 }
 
-__global__ void generate_mask(const double *world, unsigned char *active,
-                              unsigned int rows, unsigned int cols,
-                              unsigned int kernel_size)
+// -----------------------------------------------------------------------------
+// CUDA kernels
+// -----------------------------------------------------------------------------
+__global__ void convolve2d(double *result, const double *input, const double *w,
+                           unsigned int rows, unsigned int cols,
+                           unsigned int w_rows, unsigned int w_cols)
 {
     unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int i = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (i >= rows || j >= cols) return;
-    if (world[i * cols + j] <= 0.0) return;
-
-    int r = (int)kernel_size / 2;
-
-    for (int di = -r; di < r; di++)
-    {
-        for (int dj = -r; dj < r; dj++)
-        {
-            if (di * di + dj * dj > r * r) continue;
-
-            int ii = ((int)i + di + (int)rows) % (int)rows;
-            int jj = ((int)j + dj + (int)cols) % (int)cols;
-
-            active[ii * cols + jj] = 1;
-        }
-    }
-}
-
-__global__ void convolve2d_map(double *result, const double *input,
-                               const unsigned int rows, const unsigned int cols,
-                               const unsigned int w_rows, const unsigned int w_cols,
-                               const unsigned char *active)
-{
-    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int i = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (i >= rows || j >= cols) return;
-
-    if (!active[i * cols + j])
-    {
-        result[i * cols + j] = 0.0;
-        return;
-    }
 
     double sum = 0.0;
 
@@ -122,82 +92,7 @@ __global__ void convolve2d_map(double *result, const double *input,
             int ii = ((int)i - (int)w_rows / 2 + kri + (int)rows) % (int)rows;
             int jj = ((int)j - (int)w_cols / 2 + kcj + (int)cols) % (int)cols;
 
-            sum += d_w_const[ki * w_cols + kj] * input[ii * cols + jj];
-        }
-    }
-
-    result[i * cols + j] = sum;
-}
-
-__global__ void convolve2d_map_shared(double *result,
-                                      const double *input,
-                                      const unsigned int rows,
-                                      const unsigned int cols,
-                                      const unsigned int w_rows,
-                                      const unsigned int w_cols,
-                                      const unsigned char *active)
-{
-    extern __shared__ unsigned char shmem[];
-
-    int tileWidth  = blockDim.x + w_cols - 1;
-    int tileHeight = blockDim.y + w_rows - 1;
-    int tileSize   = tileWidth * tileHeight;
-
-    double *tile = (double *)shmem;
-
-#if SHARED_ACTIVE == 1
-    unsigned char *s_active = (unsigned char *)&tile[tileSize];
-#endif
-
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
-    int i = blockIdx.y * blockDim.y + threadIdx.y;
-
-    int tid = threadIdx.y * blockDim.x + threadIdx.x;
-    int threadsPerBlock = blockDim.x * blockDim.y;
-
-    for (int idx = tid; idx < tileSize; idx += threadsPerBlock) {
-        int tr = idx / tileWidth;
-        int tc = idx % tileWidth;
-
-        int gr = (int)blockIdx.y * (int)blockDim.y + tr - (int)w_rows / 2;
-        int gc = (int)blockIdx.x * (int)blockDim.x + tc - (int)w_cols / 2;
-
-        int ii = (gr + (int)rows) % (int)rows;
-        int jj = (gc + (int)cols) % (int)cols;
-
-        tile[idx] = input[ii * cols + jj];
-    }
-
-#if SHARED_ACTIVE == 1
-    if (i < rows && j < cols) {
-        s_active[tid] = active[i * cols + j];
-    }
-#endif
-
-    __syncthreads();
-
-    if (i >= rows || j >= cols) return;
-
-#if SHARED_ACTIVE == 1
-    if (!s_active[tid]) {
-#else
-    if (!active[i * cols + j]) {
-#endif
-        result[i * cols + j] = 0.0;
-        return;
-    }
-
-    double sum = 0.0;
-
-    int ti = threadIdx.y + w_rows / 2;
-    int tj = threadIdx.x + w_cols / 2;
-
-    for (int ki = (int)w_rows - 1, kri = 0; ki >= 0; ki--, kri++) {
-        for (int kj = (int)w_cols - 1, kcj = 0; kj >= 0; kj--, kcj++) {
-            int sr = ti - (int)w_rows / 2 + kri;
-            int sc = tj - (int)w_cols / 2 + kcj;
-
-            sum += d_w_const[ki * w_cols + kj] * tile[sr * tileWidth + sc];
+            sum += w[ki * w_cols + kj] * input[ii * cols + jj];
         }
     }
 
@@ -219,6 +114,9 @@ __global__ void evolve_step(double *world, const double *tmp, double dt,
     world[i * cols + j] = val;
 }
 
+// -----------------------------------------------------------------------------
+// Main evolution function
+// -----------------------------------------------------------------------------
 double *evolve_lenia(const unsigned int rows, const unsigned int cols,
                      const unsigned int steps, const double dt,
                      const unsigned int kernel_size,
@@ -232,13 +130,7 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols,
         return NULL;
     }
 
-    if (kernel_size * kernel_size > MAX_KERNEL_AREA)
-    {
-        fprintf(stderr, "Error: kernel_size=%u exceeds MAX_KERNEL_AREA=%d\n",
-                kernel_size, MAX_KERNEL_AREA);
-        return NULL;
-    }
-
+    // Host allocations
     double *world = (double *)calloc(rows * cols, sizeof(double));
     double *w = (double *)calloc(kernel_size * kernel_size, sizeof(double));
 
@@ -264,17 +156,19 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols,
                              orbiums[o].row, orbiums[o].col, orbiums[o].angle);
     }
 
-    unsigned char *d_active = NULL;
+    // Device allocations
     double *d_world = NULL;
     double *d_tmp = NULL;
+    double *d_w = NULL;
 
     checkCudaErrors(cudaMalloc((void **)&d_world, rows * cols * sizeof(double)));
     checkCudaErrors(cudaMalloc((void **)&d_tmp, rows * cols * sizeof(double)));
-    checkCudaErrors(cudaMalloc((void **)&d_active, rows * cols * sizeof(unsigned char)));
+    checkCudaErrors(cudaMalloc((void **)&d_w, kernel_size * kernel_size * sizeof(double)));
 
-    checkCudaErrors(cudaMemcpyToSymbol(d_w_const, w,
-                                       kernel_size * kernel_size * sizeof(double)));
+    // Copy data to device
     checkCudaErrors(cudaMemcpy(d_world, world, rows * cols * sizeof(double),
+                               cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_w, w, kernel_size * kernel_size * sizeof(double),
                                cudaMemcpyHostToDevice));
 
     dim3 block(block_size, block_size);
@@ -282,14 +176,6 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols,
               (rows + block.y - 1) / block.y);
 
     printf("Grid: (%d, %d), Block: (%d, %d)\n", grid.x, grid.y, block.x, block.y);
-
-    size_t shmem = (block.y + kernel_size - 1) *
-                   (block.x + kernel_size - 1) *
-                   sizeof(double);
-
-    #if SHARED_ACTIVE == 1
-    shmem += block.x * block.y * sizeof(unsigned char);
-    #endif
 
 #ifdef GENERATE_GIF
     ge_GIF *gif = ge_new_gif(
@@ -310,13 +196,8 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols,
 
     for (unsigned int step = 0; step < steps; step++)
     {
-        checkCudaErrors(cudaMemset(d_active, 0, rows * cols * sizeof(unsigned char)));
-
-        generate_mask<<<grid, block>>>(d_world, d_active, rows, cols, kernel_size);
-        checkCudaErrors(cudaGetLastError());
-
-        convolve2d_map_shared<<<grid, block, shmem>>>(
-            d_tmp, d_world, rows, cols, kernel_size, kernel_size, d_active
+        convolve2d<<<grid, block>>>(
+            d_tmp, d_world, d_w, rows, cols, kernel_size, kernel_size
         );
         checkCudaErrors(cudaGetLastError());
 
@@ -356,8 +237,8 @@ double *evolve_lenia(const unsigned int rows, const unsigned int cols,
     checkCudaErrors(cudaEventDestroy(start));
     checkCudaErrors(cudaEventDestroy(stop));
 
+    checkCudaErrors(cudaFree(d_w));
     checkCudaErrors(cudaFree(d_tmp));
-    checkCudaErrors(cudaFree(d_active));
     checkCudaErrors(cudaFree(d_world));
 
     free(w);

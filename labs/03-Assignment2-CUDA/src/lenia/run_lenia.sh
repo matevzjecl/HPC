@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus=1
 #SBATCH --nodes=1
-#SBATCH --output=lenia_out.log
+#SBATCH --output=logs/%x_%j.log
 
 #LOAD MODULES 
 module load CUDA
