@@ -52,3 +52,8 @@
     [Patterns with CUDA: Scan](lectures/12-patterns-cuda/patterns-cuda.md#scan),
     [Dense Matrix Multiplication](lectures/13-matrix-mult-dense-cuda/matrix-mult-dense-cuda.md)
   - labs:
+
+- Week 08:
+  - lectures:
+    [Sparse Matrix-vector Multiplication](lectures/14-matrix-mult-sparse-cuda/matrix-mult-sparse-cuda.md)
+  - labs:
