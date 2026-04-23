@@ -51,9 +51,14 @@
   - lectures:
     [Patterns with CUDA: Scan](lectures/12-patterns-cuda/patterns-cuda.md#scan),
     [Dense Matrix Multiplication](lectures/13-matrix-mult-dense-cuda/matrix-mult-dense-cuda.md)
-  - labs:
+  - labs: Consultations regarding Assignment 2
 
 - Week 08:
   - lectures:
     [Sparse Matrix-vector Multiplication](lectures/14-matrix-mult-sparse-cuda/matrix-mult-sparse-cuda.md)
-  - labs:
+  - labs: Assignment 2 report defense
+
+- Week 09:
+  - lectures: 
+    Invited lecture from Prof. Amr El Abbadi, University of California, Santa Barbara. Distributed Systems and Databases of the Globe Unite!
+  - labs: [Assignment 3 - Molecular dynamics](labs/04-Assignment3-CUDA/Assignment3.md)

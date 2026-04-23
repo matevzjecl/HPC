@@ -1,5 +1,5 @@
 // nvcc -Xcompiler -fopenmp -arch=sm_70 -o mmtc mmtc.cu
-//      sm_70 is the minimum architecture that supports WMMA (Tensor Cores)  
+//      sm_70 is the minimum architecture that supports WMMA (Tensor Cores, Warp Matrix Multiply Accumulate)  
 // srun --reservation=fri --partition=gpu --gpus=1 ./mmtc 2048 <compare> <printout>
 // block multiplication algorithm -- warp assignment matches row-major matrix format 
 //      solution with tensor cores (WMMA API)
@@ -78,8 +78,8 @@ __global__ void matrixMultiply(half *A, half *B, half *C, int wA, int hA, int wB
     }
 
     // store warp result to global C
-    int j = aBegin + aTileBegin;
-    int i = bBegin + bTileBegin;
+    int i = aBegin + aTileBegin;
+    int j = bBegin + bTileBegin;
     wmma::store_matrix_sync(&C[wB*i+j], fragC, wB, wmma::mem_row_major);
 }
 
