@@ -2,7 +2,7 @@
 #define LJ_H
 
 #ifdef __cplusplus
-}
+extern "C" {
 #endif
 
 #define DT 0.002

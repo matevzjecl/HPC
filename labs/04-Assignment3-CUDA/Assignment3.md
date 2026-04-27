@@ -57,7 +57,7 @@ A reference C implementation along with corresponding build and run scripts is p
 Particles are placed in the shape of a regular 2D lattice with optional random jitter in the centre of the simulation box, with a side length
 
 $$
-L = {{4}\over{3}}\sqrt{N / \rho},
+L = {{4}\over{3}}\sqrt{N\over\rho},
 $$
 
 where $\rho$ is the target reduced number density. Velocities are randomly generated, shifted to remove centre-of-mass drift, and rescaled to match the equation:
@@ -70,7 +70,7 @@ where $T$ represents the target reduced temperature of the system.
 
 **Force computation**
 
-At every simulation step, all pairwise forces are recomputed. To avoid infinite-range interactions, a cut-off radius $r_\text{cut} = 2.5\,\sigma$ is applied: pairs with $r \geq r_\text{cut}$ contribute nothing. To eliminate a discontinuity in the potential at the cut-off radius and preserve the total energy, the Lennard-Jones potential is replaced with the shifted version:
+At every simulation step, all pairwise forces are recomputed. To avoid infinite-range interactions, a cut-off radius $r_\text{cut} = 2.5 \sigma$ is applied: pairs with $r \geq r_\text{cut}$ contribute nothing. To eliminate a discontinuity in the potential at the cut-off radius and preserve the total energy, the Lennard-Jones potential is replaced with the shifted version:
 
 $$
 V_\text{shifted}(r) = V(r) - V(r_\text{cut}) \quad .
@@ -78,7 +78,7 @@ $$
 
 **Periodic boundary conditions**
 
-The simulation domain is a square box with periodic boundaries -- particles that leave the box re-enter from the opposite side. Since the simulation domain is finite but the system mimics its infinity, each particle has infinitely many periodic images. Thus, when computing the displacement vector $\mathbf{r}_{ij}$, we always select the image of particle $j$ that is closest to particle $i$. In practice, this is achieved by wrapping each component of the displacement vector into the interval $(-L/2, L/2]$,
+The simulation domain is a square box with periodic boundaries - particles that leave the box re-enter from the opposite side. Since the simulation domain is finite but the system mimics its infinity, each particle has infinitely many periodic images. Thus, when computing the displacement vector $\mathbf{r}_{ij}$, we always select the image of particle $j$ that is closest to particle $i$. In practice, this is achieved by wrapping each component of the displacement vector into the interval $(-L/2, L/2]$,
 
 $$
 \mathbf{r}_{ij} = (\mathbf{r}_i - \mathbf{r}_j) - L \cdot \text{round}\left(\frac{\mathbf{r}_i - \mathbf{r}_j}{L}\right) \quad .
@@ -89,7 +89,7 @@ $$
 The simulation advances using the Leapfrog scheme, which is time-reversible and conserves energy well over long runs. One simulation step of length $\Delta t$ consists of the following equations:
 
 $$
-\mathbf{v}_i\left(t + \tfrac{\Delta t}{2}\right) = \mathbf{v}_i(t) + \tfrac{1}{2}\,\mathbf{a}_i(t) \Delta t \quad,
+\mathbf{v}_i\left(t + \tfrac{\Delta t}{2}\right) = \mathbf{v}_i(t) + \tfrac{1}{2} \mathbf{a}_i(t) \Delta t \quad,
 $$
 
 $$
@@ -101,7 +101,7 @@ $$
 $$
 
 $$
-\mathbf{v}_i(t + \Delta t) = \mathbf{v}_i\left(t + \tfrac{\Delta t}{2}\right) + \tfrac{1}{2}\,\mathbf{a}_i(t + \Delta t)\Delta t \quad .
+\mathbf{v}_i(t + \Delta t) = \mathbf{v}_i\left(t + \tfrac{\Delta t}{2}\right) + \tfrac{1}{2} \mathbf{a}_i(t + \Delta t)\Delta t \quad .
 $$
 
 Besides, the kinetic energy and potential energy of the system,
@@ -116,7 +116,7 @@ $$
 E = E_k + E_p \quad .
 $$
 
-
+The below figures show the behavior of the system.
 
 ![Simulation.](img/lennard-jones.gif)
 
@@ -145,7 +145,7 @@ Implement a parallel Lennard-Jones simulation in C/C++ using CUDA based on the [
 **Bonus tasks (for grades 9-10):**
 
 - Parallelise (with OpenMP) the provided sequential code. Use your improved code as the baseline (with the optimal number of cores) for the measurements when computing speed-ups against the GPU.
-- Improve the reference code: note that due to Newton's 3rd law, for every action (force) in nature, there is an equal and opposite reaction. When one object exerts a force on a second object, the second object simultaneously exerts a force equal in magnitude and opposite in direction on the first, thus you only need to compute half of the interactions: $(N*(N-1))/2$.
+- Improve the reference code: note that due to Newton's 3rd law, for every action (force) in nature, there is an equal and opposite reaction. When one object exerts a force on a second object, the second object simultaneously exerts a force equal in magnitude and opposite in direction on the first, thus you only need to compute half of the interactions: $N(N-1)/2$.
 - To further reduce the number of interactions computed, think about keeping a record of particle neighbourhoods. Remember, particles which are separated by more than $r_\text{cut}$ don't affect each other.
 - Think about splitting the work between GPU threads, try to find a solution that utilises the GPU best. One thread per particle may not be the best option.
 - Experiment with and optimise how the particles are stored in memory, utilise shared memory where you see fit.
