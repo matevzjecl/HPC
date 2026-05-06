@@ -19,20 +19,8 @@ extern "C" {
 #define FRAME_DELAY 3
 #define GIF_FILE "simulation.gif"
 
-
-
-typedef struct {
-    double x;
-    double y;
-    double vx;
-    double vy;
-    double fx;
-    double fy;
-} Particle;
-
 typedef struct {
     unsigned int n;
-    const Particle *particles;
     double start_kinetic;
     double start_potential;
     double start_total;
@@ -41,28 +29,62 @@ typedef struct {
     double final_total;
 } SimulationResult;
 
+typedef struct {
+    int n_cells;
+    int num_cells;
+    double cell_size;
+    int *head;
+    int *next;
+    int *particle_cell;
+} CellGrid;
+
+typedef struct {
+    double box_size;
+    double inv_box_size;
+
+    double max_disp2;
+
+    int num_cells_x;
+    int num_cells_y;
+    int num_cells;
+
+    double cell_size_x;
+    double cell_size_y;
+    double inv_cell_size_x;
+    double inv_cell_size_y;
+    unsigned int max_neighbors;
+} constants;
+
+
 int initialize_particles(
-    Particle *particles,
+    double *x,
+    double *y,
+    double *vx,
+    double *vy,
+    double *fx,
+    double *fy,
     unsigned int n,
     double box_size,
     double placement_fraction,
     unsigned int seed,
     double temperature
 );
-void wrap_positions(Particle *particles, unsigned int n, double box_size);
 
-double compute_v_shift(void);
-double compute_forces(
-    Particle *particles,
+SimulationResult run_simulation(
+    double *x,
+    double *y,
+    double *vx,
+    double *vy,
+    double *fx,
+    double *fy,
     unsigned int n,
-    double box_size
+    unsigned int nsteps,
+    double box_size,
+    int log_steps,
+    float r_skin,
+    int block_size,
+    double density
 );
-double leapfrog_step(
-    Particle *particles,
-    unsigned int n,
-    double box_size
-);
-SimulationResult run_simulation(Particle *particles, unsigned int n, unsigned int nsteps, double box_size, int log_steps);
 
 #ifdef __cplusplus
 }

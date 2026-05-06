@@ -1,4 +1,4 @@
-# Compiler
+# Compiler maybe use -use_fast_math
 CC = nvcc
 
 # Compiler flags
@@ -9,7 +9,7 @@ SRC=src
 
 # Source files
 SRCS=$(wildcard $(SRC)/*.cu)
-SRCS+=$(wildcard $(SRC)/*.c)
+SRCS+=$(filter-out $(SRC)/lennard-jones.c, $(wildcard $(SRC)/*.c))
 
 # Header files
 HDRS = $(wildcard $(SRC)/*.h)
@@ -31,6 +31,7 @@ $(TARGET): $(OBJS)
 
 %.o: $(SRC)/%.c $(HDRS)
 	$(CC) $(CFLAGS) -c -o $@ $<
+
 # Clean
 clean:
 	rm -f $(OBJS) $(TARGET)
