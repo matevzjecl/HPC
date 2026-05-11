@@ -13,7 +13,7 @@
 # compile
 module purge
 module load NCCL
-nvcc -o allreduceNCCL allreduceNCCL.cu -lnccl -O2
+nvcc  -lnccl -o allreduceNCCL allreduceNCCL.cu
 
 # print topology
 nvidia-smi topo -m

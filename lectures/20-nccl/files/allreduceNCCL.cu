@@ -1,7 +1,10 @@
-// nccl_demo.cu  –  Single-node, 2-GPU NCCL vs naive AllReduce (plain C style)
+// Allreduce with NCCL - Nvidia Collective Communication Library
 //
 // Compile:
-//   nvcc -o nccl_demo nccl_demo.cu -lnccl -O2
+//      module load NCCL
+//      nvcc -lnccl -o allreduceNCCL allreduceNCCL.cu 
+// Run:
+//      srun --partition=gpu --gpus=2 allreduceNCCL
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,13 +59,13 @@ static void verify(float *d, int gpu, float expected, const char *label) {
 }
 
 // summing on host
-static void naive_allreduce(float *d[NUM_GPUS], float *h[NUM_GPUS]) {
+static void naive_allreduce(float *dSend[NUM_GPUS], float *dRecv[NUM_GPUS], float *h[NUM_GPUS]) {
     int i;
 
     // device -> host
     for (i = 0; i < NUM_GPUS; i++) {
         CUDA_CHECK(cudaSetDevice(i));
-        CUDA_CHECK(cudaMemcpy(h[i], d[i], N * sizeof(float), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(h[i], dSend[i], N * sizeof(float), cudaMemcpyDeviceToHost));
     }
 
     // sum on CPU into h[0]
@@ -72,18 +75,18 @@ static void naive_allreduce(float *d[NUM_GPUS], float *h[NUM_GPUS]) {
     // host -> device
     for (i = 0; i < NUM_GPUS; i++) {
         CUDA_CHECK(cudaSetDevice(i));
-        CUDA_CHECK(cudaMemcpy(d[i], h[0], N * sizeof(float), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(dRecv[i], h[0], N * sizeof(float), cudaMemcpyHostToDevice));
     }
 }
 
 // NCCL: direct GPU-GPU AllReduce
-static void nccl_allreduce(float *send[NUM_GPUS], float *recv[NUM_GPUS],
+static void nccl_allreduce(float *dSend[NUM_GPUS], float *dRecv[NUM_GPUS],
                            ncclComm_t comms[NUM_GPUS], cudaStream_t streams[NUM_GPUS]) {
     int i;
     NCCL_CHECK(ncclGroupStart());
     for (i = 0; i < NUM_GPUS; i++) {
         CUDA_CHECK(cudaSetDevice(i));
-        NCCL_CHECK(ncclAllReduce(send[i], recv[i], N, ncclFloat, ncclSum, comms[i], streams[i]));
+        NCCL_CHECK(ncclAllReduce(dSend[i], dRecv[i], N, ncclFloat, ncclSum, comms[i], streams[i]));
     }
     NCCL_CHECK(ncclGroupEnd());
 
@@ -95,13 +98,15 @@ static void nccl_allreduce(float *send[NUM_GPUS], float *recv[NUM_GPUS],
 
 // main
 int main(void) {
-    int i;
-    float *d_send[NUM_GPUS], *d_recv[NUM_GPUS];
-    float *h[NUM_GPUS];
-    ncclComm_t    comms[NUM_GPUS];
-    cudaStream_t  streams[NUM_GPUS];
-    int dev_ids[NUM_GPUS] = {0, 1};
-    double tNaive, tNCCL;
+    int     i;
+    double  tNaive, tNCCL;
+    float   *h[NUM_GPUS];                       // host buffers
+    float   *d_send[NUM_GPUS];                  // values to reduce when using NCCL
+    float   *d_recv[NUM_GPUS];                  // reduced values when using NCCL
+    
+    cudaStream_t    streams[NUM_GPUS];          // instruction queues
+    ncclComm_t      comms[NUM_GPUS];            // communication handlers
+    int             dev_ids[NUM_GPUS] = {0, 1}; // ranks
 
     // allocate host buffers and device buffers, create streams
     for (i = 0; i < NUM_GPUS; i++) {
@@ -112,19 +117,19 @@ int main(void) {
         CUDA_CHECK(cudaStreamCreate(&streams[i]));
     }
 
-    // init NCCL
-    NCCL_CHECK(ncclCommInitAll(comms, NUM_GPUS, dev_ids));
-
     // allreduce via host
     fill(d_send, h);
     tNaive = now_ms();
-    naive_allreduce(d_send, h);
+    naive_allreduce(d_send, d_recv, h);
     tNaive = now_ms() - tNaive;
     printf("AllReduce via host:\n");
     printf("  Time: %.2f ms\n", tNaive);
-    verify(d_send[0], 0, 3.0f, "via host");
-    verify(d_send[0], 1, 3.0f, "via host");
+    verify(d_recv[0], 0, 3.0f, "via host");
+    verify(d_recv[1], 1, 3.0f, "via host");
     printf("\n");
+
+    // init NCCL
+    NCCL_CHECK(ncclCommInitAll(comms, NUM_GPUS, dev_ids));
 
     // allreduce via NCCL
     fill(d_send, h);
@@ -134,11 +139,11 @@ int main(void) {
     printf("AllReduce via NCCL:\n");
     printf("  Time: %.2f ms\n", tNCCL);
     verify(d_recv[0], 0, 3.0f, "via NCCL");
-    verify(d_recv[0], 1, 3.0f, "via NCCL");
+    verify(d_recv[1], 1, 3.0f, "via NCCL");
     printf("\n");
 
     // speedup
-    printf("NCCL/host: %.2fx\n", tNaive / tNCCL);
+    printf("NCCL speedup: %.2fx\n", tNaive / tNCCL);
     
     // cleanup
     for (i = 0; i < NUM_GPUS; i++) {
