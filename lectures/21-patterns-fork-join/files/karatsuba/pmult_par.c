@@ -29,9 +29,9 @@ int karatsuba_mult_par(double *c, double *a, double *b, int n, int cutoff) {
         simple_mult(c, a, b, n);
     else {
         int m = n/2;
-        double *a_ = malloc((4*(n-m)-1)*sizeof(double));
-        double *b_ = &a_[n-m];
-        double *t = &b_[n-m];
+        double *a_ = malloc((4*(n-m)-1)*sizeof(double));    // a_ = aL + aH
+        double *b_ = &a_[n-m];                              // b_ = bL + bH
+        double *t = &b_[n-m];                               // t = tLH = a_ * b_
 
         // reset c
         c[2*m-1] = 0;                   // all other elements are assigned in next two calls
@@ -52,7 +52,7 @@ int karatsuba_mult_par(double *c, double *a, double *b, int n, int cutoff) {
         }
 
         // tLH = aLH*bLH
-        karatsuba_mult_par(t, a_, b_, n-m, cutoff); // n-m >= m; n-m = m, ali m+1
+        karatsuba_mult_par(t, a_, b_, n-m, cutoff); // n-m >= m; n-m = m, or m+1
         #pragma omp taskwait
 
         // t = tLH - tL - tH
@@ -60,7 +60,7 @@ int karatsuba_mult_par(double *c, double *a, double *b, int n, int cutoff) {
             t[0+i] -= c[0+i] + c[2*m+i];
         for (int i = 2*m-1; i < 2*(n-m)-1; i++)
             t[0+i] -= c[2*m+i];        
-        // c = tL + tH --> c = c + tLH
+        // c = tL + tH --> c = tL + tH + tLH
         for (int i = 0; i < 2*(n-m)-1; i++)
             c[m+i] += t[0+i];
 

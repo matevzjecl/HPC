@@ -12,15 +12,15 @@ Legend:
   PIX  = Connection traversing at most a single PCIe bridge
   NV#  = Connection traversing a bonded set of # NVLinks
 
-NCCL version 2.22.3+cuda12.6
 AllReduce via host:
-  Time: 264.88 ms
+  Time: 426.65 ms
   result[0] on GPU0: OK
   result[0] on GPU1: OK
 
+NCCL version 2.22.3+cuda12.6
 AllReduce via NCCL:
-  Time: 116.92 ms
+  Time: 124.07 ms
   result[0] on GPU0: OK
   result[0] on GPU1: OK
 
-NCCL/host: 2.27x
+NCCL speedup: 3.44x

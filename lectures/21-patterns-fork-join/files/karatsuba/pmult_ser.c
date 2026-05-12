@@ -44,7 +44,7 @@ int karatsuba_mult(double *c, double *a, double *b, int n, int cutoff) {
             t[0+i] -= c[0+i] + c[2*m+i];
         for (int i = 2*m-1; i < 2*(n-m)-1; i++)
             t[0+i] -= c[2*m+i];        
-        // c = tL + tH --> c = c + tLH
+        // c = tL + tH --> c = tL + tH + tLH
         for (int i = 0; i < 2*(n-m)-1; i++)
             c[m+i] += t[0+i];
 
