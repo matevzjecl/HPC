@@ -62,12 +62,10 @@
 
 ### Communicators
 
-- `ncclComm_t`
-  - defines a group of GPUs that participate in collective operations
-  - each GPU in the group holds its own communicator handle
-- initialization
-  - single node: `ncclCommInitAll(comms, nGPUs, devList)`
-- communicator rank of a GPU in range `[0, nranks-1]`
+- defines a group of GPUs that participate in collective operations (similar to MPI)
+- each GPU in the group holds its own communicator handle
+- structure ```ncclComm_t```
+- communicator GPU rank in range `[0, number of GPUS - 1]`
 
 ### CUDA Streams and Asynchronous Execution
 
@@ -85,8 +83,9 @@
   - calls inside the group are batched and launched together
   - required for multi-GPU single-process usage
   - optional but recommended for multi-process usage to improve performance  
+- `ncclAllReduce` is an example of group operation
 
-## Example: Allreduce
+## Example: Allreduce via Host and via NCCL Comparison
 
 - single-node, 2-GPU AllReduce comparing NCCL with a naive host-based implementation
 - [allreduceNCCL.cu](files/allreduceNCCL.cu) and [allreduceNCCL.sh](files/allreduceNCCL.sh)
