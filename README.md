@@ -79,9 +79,9 @@
     [MPI Collectives](lectures/17-mpi-collectives/mpi-collectives.md),
     [Data Reorganization Patterns](lectures/18-data-reorg-patterns/data-reorg-patterns.md),
     [MPI Data Types](lectures/19-mpi-datatypes/mpi-datatypes.md)
-  - labs:
+  - labs: Assignment 3 report defense
 
 - Week 12:
   - lectures:
     [NCCL](lectures/20-nccl/nccl.md),
-  - labs:
+  - labs: [Assignment 4 - Lenia with MPI](labs/05-Assignment4-MPI/Assignment4.md)
