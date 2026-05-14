@@ -5,7 +5,7 @@
 
 ## Introduction
 
-The [Lenia project](https://content.wolfram.com/sites/13/2019/10/28-3-1.pdf) started by experimenting with [Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life) variations. It is a generalisation of the Game of Life with continuous space, time, and states. As a consequence, it enables the generation of more complex autonomous creatures. The Game of Life and the Lenia are cellular automata. A cellular automaton is a grid of cells, each having a particular state at a moment. Cells are repeatedly updated according to a local rule, taking into account each cell and its neighbours.
+The [Lenia project](https://content.wolfram.com/sites/13/2019/10/28-3-1.pdf) started by experimenting with [Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life) variations. It is a generalisation of the Game of Life with continuous space, time, and states. As a consequence, it enables the generation of more complex autonomous creatures. The Game of Life and the Lenia are cellular automata. A cellular automaton is a grid of cells, each having a particular state at a moment. Cells are repeatedly updated according to a local rule that takes each cell and its neighbours into account.
 
 In the Game of Life, the cells are arranged in a rectangular grid, time runs in discrete steps, and each cell has eight neighbouring cells (radius 1), which can take only discrete values 0 (dead) or 1 (alive). The new state of a cell is determined by its current state and the number of alive neighbouring cells.
 
@@ -58,24 +58,24 @@ Below, we can see the ring kernel and Orbium creature you can use in the simulat
 
 Although it is interesting to quest for new creatures and observe their development through time, this should not be your focus. The problem is also interesting from a parallelisation and code optimisation perspective. The evolution of Lenia cellular automata over time can be easily parallelised. In each iteration, each cell's state can be computed independently, and thus in parallel, based on the values of the neighbouring cells from the previous iteration. Of course, there exists a dependence between iterations, so all of the computations in the previous iteration need to finish before we proceed to the next iteration.
 
-Implementing the Lenia simulation on distributed memory systems using libraries such as MPI involves distributing the work and exchanging data between cooperating processes to update the grid values. This communication creates additional overhead that needs to be managed effectively. 
+Implementing the Lenia simulation on distributed-memory systems using libraries such as MPI involves distributing the workload and exchanging data between cooperating processes to update the grid values. This communication creates additional overhead that needs to be managed effectively. 
 
 There are multiple ways to distribute work between the processes. This affects the number of messages and the amount of data exchanged per iteration.
 
 ![Work-distribution](img/work-dist.png)
 
-The above image shows different ways to distribute work among 9 processes and the communication patterns involved. In theory, row and column-wise splits are equivalent, but the column-wise split is less desirable due to inefficient use of CPU cache, so it should not be used in practice. Distribution of work by blocks is a double-edged sword. Using it decreases the amount of data being exchanged among the processes each iteration, and it becomes quite noticeable for many processes. In theory, this should make the algorithm more scalable. The downside is that the number of messages exchanged in each iteration increases by a factor of four, which can cause considerable overhead, potentially nullifying the benefits.
+The above image shows different ways to distribute work among 9 processes and the associated communication patterns. In theory, row and column-wise splits are equivalent, but the column-wise split is less desirable due to inefficient use of CPU cache, so it should not be used in practice. Distribution of work by blocks is a double-edged sword. Using it reduces the amount of data exchanged among processes per iteration, and this becomes quite noticeable for many processes. In theory, this should make the algorithm more scalable. The downside is that the number of messages exchanged per iteration increases by a factor of 4, which can cause considerable overhead and potentially nullify the benefits.
 
 ## Assignment
 
-Implement a parallel version of the Lenia simulation in C/C++ and MPI that evolves the initial world for a given number of iterations on a distributed system and outputs the final grid state. You can start from the provided [sequential C code](src/lenia/), which already includes examples of build and run scripts to use MPI, as well as the initialisation code for the grid to produce moving orbiums. The code also includes optional code to generate animations, which you can use to examine the results. 
+Implement a parallel Lenia simulation in C/C++ using MPI that evolves the initial world for a given number of iterations on a distributed system and outputs the final grid state. You can start from the provided [sequential C code](src/lenia/), which already includes examples of build and run scripts to use MPI, as well as the initialisation code for the grid to produce moving orbiums. The code also includes optional code to generate animations, which you can use to examine the results. 
 
 ### Code organization
 - `Makefile` -> Project build rules.
 - `run_lenia.sh` -> Sbatch script to acquire resources on the Arnes cluster, build and run the Lenia simulator.
 - `src/`
     - `main.c` -> Main project file.
-    - `lenia.cu` -> Lenia simulation code.
+    - `lenia.c` -> Lenia simulation code.
     - `orbium.c` -> Code for placement of [Orbium creatures](https://ar5iv.labs.arxiv.org/html/2005.03742/assets/fig3a1.png).
     - `gifenc.c` -> Code for generating gif animations; taken from [here](https://github.com/lecram/gifenc).
 
@@ -93,5 +93,5 @@ Implement a parallel version of the Lenia simulation in C/C++ and MPI that evolv
 - Use the block-wise distribution of work in the parallel algorithm and compare the execution times to the row-wise distribution.
 - Compare the execution times when running the processes on one or two nodes for the same number of processes and cores.
 - Use MPI derived data types to facilitate communication between processes.
-- Try to reduce communication overhead by doing more computation. Increasing the width of the border area, which is being exchanged between processes and doing additional computations on the border, enables you to exchange the data only every second, third, etc. iteration.
+- Try to reduce communication overhead by doing more computation. Increasing the width of the border area, which is exchanged between processes, and performing additional computations on the border enables you to exchange data only every second, third, etc. iteration.
 - Perform additional optimizations of the algorithm where you see fit. Compare the non-optimized algorithm to the optimized algorithm in terms of execution time.
