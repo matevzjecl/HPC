@@ -10,7 +10,8 @@
   - lectures:
     [Introduction](lectures/01-introduction/introduction.md),
     [Architectures](lectures/02-architectures/architectures.md)
-  - labs: cancelled
+  - labs: 
+    cancelled
 
 - Week 02:
   - lectures:
@@ -38,7 +39,7 @@
   - lectures:
     [Graphics Processing Units](lectures/10-gpus/gpus.md),
     [CUDA Programming Interface](lectures/11-cuda/cuda.md),
-  - labs: 
+  - labs:
     Assignment 1 report defense
 
 - Week 06:
@@ -51,14 +52,36 @@
   - lectures:
     [Patterns with CUDA: Scan](lectures/12-patterns-cuda/patterns-cuda.md#scan),
     [Dense Matrix Multiplication](lectures/13-matrix-mult-dense-cuda/matrix-mult-dense-cuda.md)
-  - labs: Consultations regarding Assignment 2
+  - labs:
+    Consultations regarding Assignment 2
 
 - Week 08:
   - lectures:
     [Sparse Matrix-vector Multiplication](lectures/14-matrix-mult-sparse-cuda/matrix-mult-sparse-cuda.md)
-  - labs: Assignment 2 report defense
+  - labs:
+    Assignment 2 report defense
 
 - Week 09:
-  - lectures: 
+  - lectures:
     Invited lecture from Prof. Amr El Abbadi, University of California, Santa Barbara. Distributed Systems and Databases of the Globe Unite!
-  - labs: [Assignment 3 - Molecular dynamics](labs/04-Assignment3-CUDA/Assignment3.md)
+  - labs:
+    [Assignment 3 - Molecular Dynamics](labs/04-Assignment3-CUDA/Assignment3.md)
+
+- Week 10:
+  - lectures:
+    [Distributed-memory Systems](lectures/15-distributed-memory-systems/distributed-memory.systems.md),
+    [MPI](lectures/16-mpi/mpi.md)
+  - labs:
+    Consultations (Zoom)
+
+- Week 11:
+  - lectures:
+    [MPI Collectives](lectures/17-mpi-collectives/mpi-collectives.md),
+    [Data Reorganization Patterns](lectures/18-data-reorg-patterns/data-reorg-patterns.md),
+    [MPI Data Types](lectures/19-mpi-datatypes/mpi-datatypes.md)
+  - labs: Assignment 3 report defense
+
+- Week 12:
+  - lectures:
+    [NCCL](lectures/20-nccl/nccl.md),
+  - labs: [Assignment 4 - Lenia with MPI](labs/05-Assignment4-MPI/Assignment4.md)
