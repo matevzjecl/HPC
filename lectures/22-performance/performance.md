@@ -151,7 +151,7 @@
 
 - example: 7 units of work, execution follows direct-acyclic graph above
 
-   <img src="figures/work-span-speedups.png" alt="Work-span speedup limits" width="50%">
+   <img src="figures/work-span-speedups.png" alt="Work-span speedup limits" width="65%">
 
   - red: upper limit
   - yellow: lower limit
