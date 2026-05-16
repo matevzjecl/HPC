@@ -215,8 +215,9 @@
 - if matrices are large, divide multiplication to two parts
 - take into account the following identities
 
-  $\left[\mathbf{A} \right] \times \left[ \mathbf{B}_0 \mathbf{B}_1 \right] = \left[ \mathbf{A}\times \mathbf{B}_0 \mathbf{A}\times \mathbf{B}_1 \right]$
+  $\left[\mathbf{A} \right] \times \left[ \mathbf{B}_0]\ \mathbf{B}_1 \right] = \left[ \mathbf{A}\times \mathbf{B}_0\ \mathbf{A}\times \mathbf{B}_1 \right]$
 
-  $\begin{bmatrix} A_0 \\ A_1 \end{bmatrix} \times [B] = \begin{bmatrix} A_0 \times B \\ A_1 \times B \end{bmatrix}$
+  $left[\begin{array}{c} A_0 \\ A_1 \end{array}\right] \times [B] = \left[\begin{array}{c} A_0 \times B \\ A_1 \times B \end{array}\right]$
 
-  $\begin{bmatrix} A_0 & A_1 \end{bmatrix} \times \begin{bmatrix} B_0 \\ B_1 \end{bmatrix} = \begin{bmatrix} A_0 \times B_0 + A_1 \times B_1 \end{bmatrix}$
+  $\left[\begin{array}{cc} A_0 & A_1 \end{array}\right] \times \left[\begin{array}{c} B_0 \\ B_1 \end{array}\right] = \left[\begin{array}{cc} A_0 \times B_0 + A_1 \times B_1 \end{array}\right]$
+  
