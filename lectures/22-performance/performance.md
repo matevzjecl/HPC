@@ -54,7 +54,7 @@
   - parallel operations, $\varphi(n)$
   - communication, $\kappa(n, p)$
 
-    <img src="figures/total-time.png" alt="Total execution time" width="40%">
+    <img src="figures/total-time.png" alt="Total execution time" width="50%">
 
 - in case of ideal work distribution among workers
 
@@ -95,7 +95,7 @@
   - focus of parallelization is to reduce the total time
 - example: $n=10$, $\sigma(n) = 2$, $\varphi(n) = 8$, $f=0.2$, $p=1, 2, 4, 8$
   
-  <img src="figures/amdahl.png" alt="Amdahl law example" width="50%">
+  <img src="figures/amdahl.png" alt="Amdahl law example" width="45%">
 
 ## Gustafson-Barsis’s Law
 
@@ -151,7 +151,7 @@
 
 - example: 7 units of work, execution follows direct-acyclic graph above
 
-   <img src="figures/work-span-speedup.png" alt="Work-span speedup limits" width="50%">
+   <img src="figures/work-span-speedups.png" alt="Work-span speedup limits" width="50%">
 
   - red: upper limit
   - yellow: lower limit
@@ -197,7 +197,7 @@
 
   - iso-efficiency and memory constraints
 
-   <img src="figures/iso-efficiency.png" alt="Iso-efficiency and memory constraints" width="50%">
+   <img src="figures/iso-efficiency.png" alt="Iso-efficiency and memory constraints" width="60%">
 
 - example: reduce with tiling
   - use serial algorithm where possible
