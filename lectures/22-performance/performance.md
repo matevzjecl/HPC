@@ -224,7 +224,7 @@
     - total execution time equals $t_p(n) = (\chi+\lambda)\lceil\log_2 n\rceil$
   - tiled parallel reduction using $p$ tasks
   
-    <img src="figures/reduce-tiling.png.png" alt="Tiled reduce" width="65%">
+    <img src="figures/reduce-tiling.png" alt="Tiled reduce" width="65%">
 
     - each task performs $\lceil n/p \rceil -1$ sequential reduce operations
     - intermediate results are reduced by three-like scheme in $\lceil\log_2 p\rceil$ steps
