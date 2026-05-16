@@ -217,4 +217,4 @@
 
   $\left[\mathbf{A} \right] \times \left[ \mathbf{B}_0] | \mathbf{B}_1 \right] = \left[ \mathbf{A}\times \mathbf{B}_0 | \mathbf{A}\times \mathbf{B}_1 \right]$
 
-  $\left[{\mathbf{A}_0\over \mathbf{A}_1}\right] \times \mathbf{B} = \left[{\mathbf{A}_0\times\mathbf{B} \over \mathbf{A}_1\times\mathbf{B}} \right]$
+  $\left[\substack{\mathbf{A}_0 \\ \mathbf{A}_1}\right] \times \mathbf{B} = \left[{\mathbf{A}_0\times\mathbf{B} \over \mathbf{A}_1\times\mathbf{B}} \right]$
