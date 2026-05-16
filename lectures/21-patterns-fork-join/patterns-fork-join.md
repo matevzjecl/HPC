@@ -179,14 +179,14 @@
 
 - algorithm time complexity
   - unlimited number of tasks
-  - no early stopping of rrecursion
+  - no early stopping of recursion
   - assumption $n=2^k$
   - serial algorithm: $T_1(n) = 3\cdot T_1(n/2) + n$
     - $T_1(2^k) = 2^k + 3T_1(2^{k-1}) = 2^k + 3^1 2^{k-1} + 3^2T_1(2^{k-2}) = ... = \sum_{i=0}^k 2^i 3^{k-i} =3^k \sum_{i=0}^k ({2\over 3})^i = 3^k\frac{1-(\frac{2}{3})^{k+1}}{1-\frac{2}{3}} = 3^{k+1}-2^{k+1}$
     - $T_1(2^k) = 3\cdot 3^{k}-2\cdot 2^{k} = 3(2^{\log_2 3})^k - 2\cdot 2^k = 3(2^k)^{\log_2 3} - 2\cdot 2^k$
     - $T_1(n) = 3n^{\log_2 3} - 2n$
   - parallel algorithm: $T_{\infty}(n)= 1\cdot T_{\infty}(n/2) + n$
-    - $T_{\infty}(2^k) = 2^k + T_{\infty}(2^{k-1}) = 2^k + 2^{k-1} + T_{\infty}(2^{k-2}) = \sum_{i=0}^k 2^{k-1} = 2^k\sum_{i=0}^k (\frac{1}{2})^i = 2^k \frac{1-(\frac{1}{2})^{k+1}-\frac{1}{2}} = 2{k+1}-1$
+    - $T_{\infty}(2^k) = 2^k + T_{\infty}(2^{k-1}) = 2^k + 2^{k-1} + T_{\infty}(2^{k-2}) = \sum_{i=0}^k 2^{k-i} = 2^k\sum_{i=0}^k (\frac{1}{2})^i = 2^k \frac{1-(\frac{1}{2})^{k+1}{1-\frac{1}{2}} = 2^{k+1}-1$
     - $T_{\infty}(n) = 2n-1$
 - algorithm space complexity
   - serial solution needs less memory as it can reuse structures: $M_1(n) = M_1(\frac{n}{2}) + O(n)\quad, \quad M_1(1) = O(1)$
