@@ -126,11 +126,71 @@
 - task on level $l$ has $cN^d$ work itself and task on level $l+1$ has $ac(\frac{N}{b})^d$ work itself
 - asymptotic solutions
   - based on proportion $r = \frac{t_{l+1}(N)}{t_l(N)} = \frac{a}{b^d}$
-  - case 1: $r > 1: t(N) = O(N^{\log_b A})$
+  - case 1: $r > 1$: $t(N) = O(N^{\log_b A})$
     - the work exponentially increases with depth, bottom levels dominate
-  - case 2: $r = 1: t(N) = O(N^d \log_2 N)$
+  - case 2: $r = 1$: $t(N) = O(N^d \log_2 N)$
     - the work at each level is about the same
     - the work is proportional to the work at top level times the number of levels
-  - case 3: $r < 1: t(N) = O(N^d)$
+  - case 3: $r < 1$: $t(N) = O(N^d)$
     - the work exponentially decreases with depth, top levels dominate
 - examples with $𝑐 = 𝑑 = 1$
+
+### Karatsuba Polynomial Multiplication
+
+- input: polynomials $a$ and $b$ of degree $n-1$ ($n$ coefficients)
+- output: polynomial $c$ of degree $2n-2$ ($2n−1$ coefficients)
+- the flat (high-school) method
+  - concise and highly parallel for large $n$
+  - creates $O(n^2)$ serial work
+  - example:
+    - $c(x) = a(x)b(x) = (a_1x + a_0)(b_1x + b_0) = a_1b_1x^2 + a_1b_0x + a_0_b1x + a_0b_0$
+    - four multiplications of coefficients
+- idea of Karatsuba method
+  - $c(x) = a(x)b(x) = (a_1x + a_0)(b_1x + b_0) = a_1b_1x^2 + (a_1b_0+a_0_b1)x + a_0b_0$
+  - only three multiplications
+    - $t_0=a_0b_0$
+    - $t_2=a_1b_1$
+    - $t_1=(a_1+a_0)(b_1+b_0)
+  - $c(x) = t_2x^2 + (t_1-t_0-t_2)x + t_0$
+- each multiplication can be done by recursive application of Karatsuba method
+  - for small polynomials flat method becomes more efficient
+  - the method is commonly used for exact integer multiplication
+  - example
+    - $1234\times 5678$
+      - $x=10$
+      - $a_1(x) = 12 x^2 + 34 x^0$, $b_1(x) = 56 x^2 + 78$
+      - $c_1(x) = a_1(x)b_1(x)$
+        - $t_0 = 34 \times 78$
+        - $t_2 = 12 \times 56$
+        - $t_1 = (12 + 34)\times (56+78)$
+        - it is still hard to calculate in a head, go one level deeper
+        - calculation for $t_2$:
+          - $a_2(x) = 1 x +2$, $b_2(x) = 3x+4$
+          - $c_2(x) = a_2(x)b_2(x)$
+            - $t_0 = 2 \times 6 = 12$
+            - $t_2 = 1 \times 5 = 5$
+            - $t_1 = (1+2)\times(5+6)=33$
+            - $c_2(10) = 5 \times 10 + (33-12-5) \times 10 + 12 = 672$
+        - following the same approach we also get $t_0 = 2652$ and $t_1=6164$ resulting in $c_1(10) = 7006652$
+- code for polynomial multiplication
+  - [pmult_ser.c](files/karatsuba/pmult_ser.c) and [pmult_ser.sh](files/karatsuba/pmult_ser.sh): reference implementation
+  - [pmult_par.c](files/karatsuba/pmult_par.c) and [pmult_par.sh](files/karatsuba/pmult_par.sh): parallel recursive implementation
+    - limiting the recursion depth (`CUTOFF`) is important to gain speedups
+
+- algorithm time complexity
+  - unlimited number of tasks
+  - no early stopping of rrecursion
+  - assumption $n=2^k$
+  - serial algorithm: $t(n) = 3\cdot t(n/2) + n$
+    - $t(2^k) = 2^k + 3t(2^{k-1}) = 2^k + 3^1 2^{k-1} + 3^2t(2^{k-2}) = ... = \sum_{i=0}^k 2^i 3^{k-i} =3^k \sum_{i=0}^k (2\over 3)^i = 3^k\frac{1-(\frac{2}{3})^{k+1}}{1-\frac{2}{3}} = 3^{k+1}-2^{k+1}$
+    - $t(2^k) = 3\cdot 3^{k}-2\cdot 2^{k} = 3(2^{\log_2 3})^k - 2\cdot 2^k = 3(2^k)^{\log_2 3} - 2\cdot 2^k$
+    - $t(n) = 3n^{\log_2 3} - 2n$
+  - parallel algorithm: $t(n)= 1\cdot t(n/2) + n$
+    - $t(2^k) = 2^k + t(2^{k-1}) = 2^k + 2^{k-1} + t(2^{k-2}) = \sum_{i=0}^k 2^{k-1} = 2^k\sum_{i=0}^k (\frac{1}{2})^i = 2^k \frac{1-(\frac{1}{2})^{k+1|-\frac{1}{2}} = 2{k+1}-1$
+    - $t(n) = 2n-1$
+- algorithm space complexity
+  - serial solution needs less memory as it can reuse structures: $M_1(n) = M_1(\frac{n}{2}) + O(n)\quad, \quad M_1(1) = O(1)$
+  - parallel solution needs to store some temporary values
+    - coefficients of $a(x)$, $b(x)$, and $c(x)$ can be used on all levels of recursion
+    - additional memory is needed to store sum of coefficients ($a_1+a_0$ and $b_1+b_0$ in the example) and their product $t$
+    - $M_{\infty}(n) = 3 M_{\infty}(\frac{n}{2}) + O(n)\quad, \quad M_{\infty}(1) = O(1)$
