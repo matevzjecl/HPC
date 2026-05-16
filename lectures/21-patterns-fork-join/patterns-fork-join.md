@@ -12,11 +12,16 @@
     - each flow is independent and not constrained to do similar computation
   - multiple flows join (combine) the latter
     - after joining, only one flow continues
-  - example: two tasks B() and C() are executed in parallel and joined afterward
+  - example: a task is split to two subtasks that executed in parallel and joined afterward
+
+    <img src="figures/fork-join.png" alt="Fork-join pattern" width="30%">
 
 ## Divide-and-conquer
 
-- typical divide-and-conquer pattern
+- typical divide-and-conquer scheme
+
+    <img src="figures/divide-conquer.png" alt="Devide-and-conquer patternFork-join scheme" width="80%">
+
   - sub-problems must be independent
 
   ```C
@@ -91,7 +96,13 @@
 ### Recursive Implementation of the Map-reduce Pattern
 
 - adaptive quadrature using trapezoidal rule
-- compare quadrature on two levels: if difference is grater than allowed, split interval to two halves and repeat quadrature on each halve
+- compare quadrature on two levels:
+  - area of trapezoid spanning from the lower to the upper bound (red)
+  - sum of area of trapezoid spanning from the lower bound to the middle and the area of trapezoid spanning from the middle to the upper bound (green)
+
+    <img src="figures/adapt-quad.png" alt="Adaptive wuadrature using trapezoidal rule" width="65%">
+
+- if difference is grater than allowed, split interval to two halves and repeat quadrature on each halve
 - code
   - [adaptquad_ser.c](files/adaptquad/adaptquad_ser.c) and [adaptquad_ser.sh](files/adaptquad/adaptquad_ser.sh): reference serial implementation
   - [adaptquad_par1.c](files/adaptquad/adaptquad_par1.c) and [adaptquad_par1.sh](files/adaptquad/adaptquad_par1.sh)
@@ -134,6 +145,8 @@
   - case 3: $r < 1$: $T(n) = O(n^d)$
     - the work exponentially decreases with depth, top levels dominate
 - examples with $c = d = 1$
+
+  <img src="figures/algorithm-complexity.png" alt="Divide-and-conquer algorithm complexity" width="80%">
 
 ### Karatsuba Polynomial Multiplication
 
@@ -210,7 +223,7 @@
 
 ### Matrix Multiply-and-add
 
-- $\mathbf{C}_{m\times n} = \mathbf{C}_{m\times n} + \mathbf{A}_{m\times k} \times \mathbf{B}_{k \times n}$
+- $\mathbf{C}_{m \times n} = \mathbf{C}_{m \times n} + \mathbf{A}_{m \times k} \times \mathbf{B}_{k \times n}$
 - similar to Strassen algorithm
 - if matrices are small, use serial multiplication
 - if matrices are large, divide multiplication to two parts
@@ -224,6 +237,7 @@
         $\left[ \mathbf{A}_0 \ \mathbf{A}_1 \right] \times \left[ \genfrac{}{}{0pt}{}{\mathbf{B}_0}{\mathbf{B}_1} \right] = \left[ \mathbf{A}_0 \times \mathbf{B}_0 + \mathbf{A}_1 \times \mathbf{B}_1 \right]$
   - this way cache locality is maximized during multiplication
 - pseudo code
+
   ```C
   // C[m][n] += A[m][k] * B[k][n]
   void MultiplyAdd(double **C, double **A, double **B) {
@@ -262,8 +276,10 @@
   
 - serial algorithm
   - time complexity: $T_1 = O(mnk)$
+  - space complexity: $M_1 = O(mn) + O(mk) + O(kn)$
 - parallel algorithm
   - time complexity: $T_{\infty} = \log_2 m + \log_2 n + k$
+  - space complexity: $M_{\infty} = M_1$ with multiply-and-add
   - on the finest level each task is doing the multiplication of one element in matrix $\mathbf{C}$
   - the first two terms give the number of partitions
   - the last terms gives the time needed to get scalar product for one element of matrix $\mathbf{C}$
