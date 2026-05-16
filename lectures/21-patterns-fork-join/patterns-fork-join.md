@@ -100,7 +100,7 @@
   - area of trapezoid spanning from the lower to the upper bound (red)
   - sum of area of trapezoid spanning from the lower bound to the middle and the area of trapezoid spanning from the middle to the upper bound (green)
 
-    <img src="figures/adapt-quad.png" alt="Adaptive wuadrature using trapezoidal rule" width="60 %">
+    <img src="figures/adapt-quad.png" alt="Adaptive wuadrature using trapezoidal rule" width="60%">
 
 - if difference is grater than allowed, split interval to two halves and repeat quadrature on each halve
 - code
