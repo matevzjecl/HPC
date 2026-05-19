@@ -10,7 +10,7 @@
   - lectures:
     [Introduction](lectures/01-introduction/introduction.md),
     [Architectures](lectures/02-architectures/architectures.md)
-  - labs: 
+  - labs:
     cancelled
 
 - Week 02:
@@ -79,9 +79,17 @@
     [MPI Collectives](lectures/17-mpi-collectives/mpi-collectives.md),
     [Data Reorganization Patterns](lectures/18-data-reorg-patterns/data-reorg-patterns.md),
     [MPI Data Types](lectures/19-mpi-datatypes/mpi-datatypes.md)
-  - labs: Assignment 3 report defense
+  - labs:
+    Assignment 3 report defense
 
 - Week 12:
   - lectures:
     [NCCL](lectures/20-nccl/nccl.md),
-  - labs: [Assignment 4 - Lenia with MPI](labs/05-Assignment4-MPI/Assignment4.md)
+    [Patterns: Fork-join](lectures/21-patterns-fork-join/patterns-fork-join.md)
+  - labs:
+    [Assignment 4 - Lenia with MPI](labs/05-Assignment4-MPI/Assignment4.md)
+
+- Week 13:
+  - lectures:
+    [Performance Measures](lectures/22-performance/performance.md)
+  - labs:
