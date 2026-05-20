@@ -92,4 +92,4 @@
 - Week 13:
   - lectures:
     [Performance Measures](lectures/22-performance/performance.md)
-  - labs:
+  - labs: Consultations regarding Assignment 4
