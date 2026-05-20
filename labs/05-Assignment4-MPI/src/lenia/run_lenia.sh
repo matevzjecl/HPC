@@ -2,9 +2,9 @@
 
 #SBATCH --reservation=fri
 #SBATCH --job-name=lenia
-#SBATCH --ntasks-per-node=2
+#SBATCH --ntasks-per-node=8
 #SBATCH --nodes=1
-#SBATCH --output=lenia_out.log
+#SBATCH --output=logs/%x_%j.log
 #SBATCH --hint=nomultithread
 
 #Load MPI module 
@@ -14,5 +14,5 @@ module load OpenMPI
 make
 
 #Run
-mpirun -np $SLURM_NTASKS ./lenia.out
+mpirun -np $SLURM_NTASKS -x FI_PROVIDER=tcp ./lenia.out
 
