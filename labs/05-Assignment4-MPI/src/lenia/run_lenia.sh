@@ -14,5 +14,5 @@ module load OpenMPI
 make
 
 #Run
-mpirun -np $SLURM_NTASKS -x FI_PROVIDER=tcp ./lenia.out
+mpirun --mca pml ob1 -np $SLURM_NTASKS ./lenia.out
 
