@@ -10,10 +10,6 @@
 #include "orbium.h"
 #include "gifenc.h"
 
-/*
-    Uncomment this only for small visual tests.
-    For performance benchmarks, keep it disabled because GIF writing dominates runtime.
-*/
 // #define GENERATE_GIF
 
 // Function to calculate Gaussian
@@ -138,17 +134,6 @@ static inline double *convolve2d(
     return result;
 }
 
-/*
-    Row-based convolution for MPI.
-
-    Each rank has the full current world, but only computes its own horizontal
-    stripe. active_local is also local and dense:
-
-        active_local[0]                     -> global row start_row
-        active_local[cols]                  -> global row start_row + 1
-        ...
-        active_local[(local_rows - 1)*cols] -> global row start_row + local_rows - 1
-*/
 static double *convolve2d_rows_local_result(
     double *local_result,
     const double *input,
@@ -241,11 +226,6 @@ int build_circle_offsets(Offset* offsets, unsigned int kernel_size)
     return count;
 }
 
-/*
-    Old gather-style implementation.
-    It is safe without atomics because every output cell is written once.
-    It can be slower when world is sparse because every output cell scans a neighborhood.
-*/
 void generate_mask_gather(const double* world,
                           unsigned char* active,
                           unsigned int rows,
@@ -283,10 +263,6 @@ void generate_mask_gather(const double* world,
     }
 }
 
-/*
-    Old scatter-style implementation.
-    Caller must clear active before calling this function.
-*/
 void generate_mask_scatter(const double* world,
                            unsigned char* active,
                            unsigned int rows,
@@ -319,10 +295,6 @@ void generate_mask_scatter(const double* world,
     }
 }
 
-/*
-    Faster scatter using precomputed circle offsets.
-    Caller must clear active before calling this function.
-*/
 void generate_mask_scatter_fast(const double* world,
                                 unsigned char* active,
                                 unsigned int rows,
@@ -403,10 +375,6 @@ int collect_nonzero_cells_local_rows(const double* world,
     return count;
 }
 
-/*
-    Cell-list mask generation for a full local process.
-    Caller must clear active before calling this function.
-*/
 void generate_mask_from_cells(unsigned char* active,
                               unsigned int rows,
                               unsigned int cols,
@@ -436,14 +404,6 @@ void generate_mask_from_cells(unsigned char* active,
     }
 }
 
-/*
-    MPI mask contribution generation.
-
-    Each rank only collects nonzero cells from its own rows. However, those cells
-    can activate mask cells that belong to other ranks. Therefore each rank first
-    creates a full-size contribution array. Then MPI_Reduce_scatter_block with
-    MPI_MAX combines all contributions and gives each rank only its own mask rows.
-*/
 void generate_mask_contribution_from_cells(unsigned char* mask_contribution,
                                            unsigned int rows,
                                            unsigned int cols,
@@ -476,23 +436,6 @@ double *evolve_lenia(
     const int size
 )
 {
-    /*
-        Do not trust rank/size passed from main.
-        Use the actual MPI communicator values.
-    */
-    (void)rank;
-    (void)size;
-
-    int mpi_rank;
-    int mpi_size;
-
-    MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
-
-    /*
-        Make sure every rank uses exactly the same simulation parameters.
-        Rank 0 is the source of truth.
-    */
     unsigned int sim_rows = rows;
     unsigned int sim_cols = cols;
     unsigned int sim_steps = steps;
@@ -507,7 +450,7 @@ double *evolve_lenia(
 
     if (sim_rows == 0 || sim_cols == 0 || sim_kernel_size == 0)
     {
-        if (mpi_rank == 0)
+        if (rank == 0)
         {
             fprintf(stderr, "Error: rows, cols and kernel_size must be > 0.\n");
         }
@@ -515,16 +458,16 @@ double *evolve_lenia(
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
-    if (sim_rows % (unsigned int)mpi_size != 0)
+    if (sim_rows % (unsigned int)size != 0)
     {
-        if (mpi_rank == 0)
+        if (rank == 0)
         {
             fprintf(
                 stderr,
                 "Error: number of rows (%u) must be divisible by number of MPI ranks (%d).\n"
                 "For non-divisible row counts, use MPI_Allgatherv/Gatherv instead.\n",
                 sim_rows,
-                mpi_size
+                size
             );
         }
 
@@ -532,12 +475,12 @@ double *evolve_lenia(
     }
 
     size_t total_count_size = (size_t)sim_rows * (size_t)sim_cols;
-    size_t local_rows_size = (size_t)sim_rows / (size_t)mpi_size;
+    size_t local_rows_size = (size_t)sim_rows / (size_t)size;
     size_t local_count_size = local_rows_size * (size_t)sim_cols;
 
     if (total_count_size > (size_t)INT_MAX || local_count_size > (size_t)INT_MAX)
     {
-        if (mpi_rank == 0)
+        if (rank == 0)
         {
             fprintf(
                 stderr,
@@ -549,7 +492,7 @@ double *evolve_lenia(
     }
 
     unsigned int local_rows = (unsigned int)local_rows_size;
-    unsigned int start_row = (unsigned int)mpi_rank * local_rows;
+    unsigned int start_row = (unsigned int)rank * local_rows;
     int total_count = (int)total_count_size;
     int local_count = (int)local_count_size;
     int start_i = (int)((size_t)start_row * (size_t)sim_cols);
@@ -557,7 +500,7 @@ double *evolve_lenia(
 #ifdef GENERATE_GIF
     ge_GIF *gif = NULL;
 
-    if (mpi_rank == 0)
+    if (rank == 0)
     {
         gif = ge_new_gif(
             "lenia.gif",
@@ -582,19 +525,11 @@ double *evolve_lenia(
         sizeof(double)
     );
 
-    /*
-        Every rank stores the full world.
-        This is why MPI_Allgather is used after each step.
-    */
     double *world = (double *)calloc(
         total_count_size,
         sizeof(double)
     );
 
-    /*
-        local_tmp stores convolution values for this rank's rows.
-        local_next stores the updated row block that will be all-gathered.
-    */
     double *local_tmp = (double *)calloc(
         local_count_size,
         sizeof(double)
@@ -605,11 +540,6 @@ double *evolve_lenia(
         sizeof(double)
     );
 
-    /*
-        Each rank builds a full-size contribution from only its local source rows.
-        MPI_Reduce_scatter_block combines all contributions and returns only the
-        local mask rows into active_local.
-    */
     unsigned char *mask_contribution = (unsigned char *)calloc(
         total_count_size,
         sizeof(unsigned char)
@@ -637,7 +567,7 @@ double *evolve_lenia(
         offsets == NULL ||
         cells == NULL)
     {
-        fprintf(stderr, "Rank %d: failed to allocate simulation arrays.\n", mpi_rank);
+        fprintf(stderr, "Rank %d: failed to allocate simulation arrays.\n", rank);
 
         free(w);
         free(world);
@@ -654,7 +584,7 @@ double *evolve_lenia(
     generate_kernel(w, sim_kernel_size);
     int offset_count = build_circle_offsets(offsets, sim_kernel_size);
 
-    if (mpi_rank == 0)
+    if (rank == 0)
     {
         for (unsigned int o = 0; o < num_orbiums; o++)
         {
@@ -675,9 +605,6 @@ double *evolve_lenia(
         }
     }
 
-    /*
-        Initial full world is needed on every rank before the first convolution.
-    */
     MPI_Bcast(
         world,
         total_count,
@@ -687,7 +614,7 @@ double *evolve_lenia(
     );
 
 #ifdef GENERATE_GIF
-    if (mpi_rank == 0)
+    if (rank == 0)
     {
         for (unsigned int i = 0; i < sim_rows * sim_cols; i++)
         {
@@ -724,11 +651,6 @@ double *evolve_lenia(
             offset_count
         );
 
-        /*
-            Combine all rank contributions with OR-like behavior.
-            Since values are 0/1, MPI_MAX works like logical OR.
-            Each rank receives only its own contiguous row block of the mask.
-        */
         MPI_Reduce_scatter_block(
             mask_contribution,
             active_local,
@@ -756,11 +678,6 @@ double *evolve_lenia(
             double value = world[start_i + i] + sim_dt * growth_lenia(local_tmp[i]);
             local_next[i] = fmin(1.0, fmax(0.0, value));
         }
-
-        /*
-            Equal row blocks, so MPI_Allgather is enough.
-            After this call, every rank again has the full updated world.
-        */
         MPI_Allgather(
             local_next,
             local_count,
@@ -772,7 +689,7 @@ double *evolve_lenia(
         );
 
 #ifdef GENERATE_GIF
-        if (mpi_rank == 0)
+        if (rank == 0)
         {
             for (unsigned int i = 0; i < sim_rows * sim_cols; i++)
             {
@@ -785,7 +702,7 @@ double *evolve_lenia(
     }
 
 #ifdef GENERATE_GIF
-    if (mpi_rank == 0)
+    if (rank == 0)
     {
         ge_close_gif(gif);
     }

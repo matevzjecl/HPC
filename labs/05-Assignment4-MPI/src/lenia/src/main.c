@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include "lenia.h"
 
-#define N 512
+#define N 4096
 #define NUM_STEPS 100
 #define DT 0.1
 #define KERNEL_SIZE 26
