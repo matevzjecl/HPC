@@ -10,7 +10,7 @@
 #include "orbium.h"
 #include "gifenc.h"
 
-#define GENERATE_GIF
+// #define GENERATE_GIF
 
 #define HALO_TAG_UP 100
 #define HALO_TAG_DOWN 101
@@ -447,18 +447,6 @@ static void exchange_halo_rows_nonblocking(
         return;
     }
 
-    /*
-        local_world layout:
-
-        0 ... halo - 1:
-            top halo rows
-
-        halo ... halo + local_rows - 1:
-            real local rows
-
-        halo + local_rows ... halo + local_rows + halo - 1:
-            bottom halo rows
-    */
 
     const int count = (int)((size_t)halo * (size_t)cols);
 
@@ -611,6 +599,69 @@ static void generate_active_mask_local_scatter_from_halo(
     }
 }
 
+static void generate_active_mask_local_scatter_from_full_world(
+    unsigned char *restrict active_local,
+    const double *restrict world,
+    const unsigned int rows,
+    const unsigned int cols,
+    const unsigned int start_row,
+    const unsigned int local_rows,
+    const Offset *restrict offsets,
+    const int offset_count
+)
+{
+    if (active_local == NULL || world == NULL || offsets == NULL)
+    {
+        return;
+    }
+
+    memset(
+        active_local,
+        0,
+        (size_t)local_rows * (size_t)cols * sizeof(*active_local)
+    );
+
+    const unsigned int end_row = start_row + local_rows;
+
+    for (unsigned int src_row = 0; src_row < rows; src_row++)
+    {
+        const double *restrict world_row =
+            world + (size_t)src_row * (size_t)cols;
+
+        for (unsigned int src_col = 0; src_col < cols; src_col++)
+        {
+            if (world_row[src_col] <= 0.0)
+            {
+                continue;
+            }
+
+            for (int k = 0; k < offset_count; k++)
+            {
+                unsigned int dst_global_row = wrap_unsigned_index(
+                    (int)src_row + offsets[k].di,
+                    rows
+                );
+
+                if (dst_global_row < start_row || dst_global_row >= end_row)
+                {
+                    continue;
+                }
+
+                unsigned int dst_local_row = dst_global_row - start_row;
+
+                unsigned int dst_col = wrap_unsigned_index(
+                    (int)src_col + offsets[k].dj,
+                    cols
+                );
+
+                active_local[
+                    (size_t)dst_local_row * (size_t)cols + (size_t)dst_col
+                ] = 1;
+            }
+        }
+    }
+}
+
 static double *convolve2d_rows_local_halo(
     double *restrict local_result,
     const double *restrict local_world,
@@ -754,20 +805,18 @@ double *evolve_lenia(
     size_t local_with_halo_count_size =
         local_with_halo_rows_size * (size_t)sim_cols;
 
-    if (local_rows_size < (size_t)halo)
-    {
-        if (rank == 0)
-        {
-            fprintf(
-                stderr,
-                "Error: local_rows (%zu) must be >= halo size (%u).\n"
-                "Use fewer MPI ranks or a smaller kernel size.\n",
-                local_rows_size,
-                halo
-            );
-        }
+    const int use_full_world_fallback =
+        (local_rows_size < (size_t)halo) ? 1 : 0;
 
-        MPI_Abort(MPI_COMM_WORLD, 1);
+    if (use_full_world_fallback && rank == 0)
+    {
+        fprintf(
+            stderr,
+            "Info: local_rows (%zu) is smaller than halo size (%u).\n"
+            "Using full-world MPI_Allgather fallback for these parameters.\n",
+            local_rows_size,
+            halo
+        );
     }
 
     if (total_count_size > (size_t)INT_MAX ||
@@ -816,14 +865,7 @@ double *evolve_lenia(
         sizeof(double)
     );
 
-    /*
-        Full world is now only used for:
-        - initial placement on rank 0
-        - optional GIF frames
-        - final result after final MPI_Allgather
 
-        The actual simulation uses only local_world + halo rows.
-    */
     double *world = (double *)calloc(
         total_count_size,
         sizeof(double)
@@ -912,6 +954,19 @@ double *evolve_lenia(
         MPI_COMM_WORLD
     );
 
+    if (use_full_world_fallback)
+    {
+        MPI_Allgather(
+            local_real,
+            local_count,
+            MPI_DOUBLE,
+            world,
+            local_count,
+            MPI_DOUBLE,
+            MPI_COMM_WORLD
+        );
+    }
+
 #ifdef GENERATE_GIF
     if (rank == 0)
     {
@@ -926,46 +981,68 @@ double *evolve_lenia(
 
     for (unsigned int step = 0; step < sim_steps; step++)
     {
-        /*
-            Point 4:
-            Only boundary halo rows are exchanged here.
-            No full-world MPI_Allgather happens during normal steps.
-        */
-        exchange_halo_rows_nonblocking(
-            local_world,
-            local_rows,
-            sim_cols,
-            halo,
-            rank,
-            size
-        );
+        const unsigned int start_row = (unsigned int)rank * local_rows;
 
-        /*
-            Fast sparse mask:
-            Uses local rows + halo rows only.
-            No global mask_contribution and no MPI_Reduce_scatter_block.
-        */
-        generate_active_mask_local_scatter_from_halo(
-            active_local,
-            local_world,
-            local_rows,
-            sim_cols,
-            halo,
-            offsets,
-            offset_count
-        );
+        if (use_full_world_fallback)
+        {
+            generate_active_mask_local_scatter_from_full_world(
+                active_local,
+                world,
+                sim_rows,
+                sim_cols,
+                start_row,
+                local_rows,
+                offsets,
+                offset_count
+            );
 
-        convolve2d_rows_local_halo(
-            local_tmp,
-            local_world,
-            w,
-            local_rows,
-            sim_cols,
-            halo,
-            sim_kernel_size,
-            sim_kernel_size,
-            active_local
-        );
+            convolve2d_rows_local_result(
+                local_tmp,
+                world,
+                w,
+                sim_rows,
+                sim_cols,
+                sim_kernel_size,
+                sim_kernel_size,
+                start_row,
+                local_rows,
+                active_local
+            );
+        }
+        else
+        {
+
+            exchange_halo_rows_nonblocking(
+                local_world,
+                local_rows,
+                sim_cols,
+                halo,
+                rank,
+                size
+            );
+
+            generate_active_mask_local_scatter_from_halo(
+                active_local,
+                local_world,
+                local_rows,
+                sim_cols,
+                halo,
+                offsets,
+                offset_count
+            );
+
+            convolve2d_rows_local_halo(
+                local_tmp,
+                local_world,
+                w,
+                local_rows,
+                sim_cols,
+                halo,
+                sim_kernel_size,
+                sim_kernel_size,
+                active_local
+            );
+        }
 
         local_real =
             local_world + (size_t)halo * (size_t)sim_cols;
@@ -993,19 +1070,35 @@ double *evolve_lenia(
         local_world = local_next;
         local_next = swap_tmp;
 
-#ifdef GENERATE_GIF
         local_real =
             local_world + (size_t)halo * (size_t)sim_cols;
 
-        MPI_Allgather(
-            local_real,
-            local_count,
-            MPI_DOUBLE,
-            world,
-            local_count,
-            MPI_DOUBLE,
-            MPI_COMM_WORLD
-        );
+#ifdef GENERATE_GIF
+        if (use_full_world_fallback)
+        {
+            MPI_Allgather(
+                local_real,
+                local_count,
+                MPI_DOUBLE,
+                world,
+                local_count,
+                MPI_DOUBLE,
+                MPI_COMM_WORLD
+            );
+        }
+        else
+        {
+            MPI_Gather(
+                local_real,
+                local_count,
+                MPI_DOUBLE,
+                world,
+                local_count,
+                MPI_DOUBLE,
+                0,
+                MPI_COMM_WORLD
+            );
+        }
 
         if (rank == 0)
         {
@@ -1016,19 +1109,33 @@ double *evolve_lenia(
 
             ge_add_frame(gif, 5);
         }
+#else
+        if (use_full_world_fallback)
+        {
+            MPI_Allgather(
+                local_real,
+                local_count,
+                MPI_DOUBLE,
+                world,
+                local_count,
+                MPI_DOUBLE,
+                MPI_COMM_WORLD
+            );
+        }
 #endif
     }
 
     local_real =
         local_world + (size_t)halo * (size_t)sim_cols;
 
-    MPI_Allgather(
+    MPI_Gather(
         local_real,
         local_count,
         MPI_DOUBLE,
         world,
         local_count,
         MPI_DOUBLE,
+        0,
         MPI_COMM_WORLD
     );
 

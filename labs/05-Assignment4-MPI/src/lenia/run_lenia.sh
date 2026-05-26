@@ -2,7 +2,7 @@
 
 #SBATCH --reservation=fri
 #SBATCH --job-name=lenia
-#SBATCH --ntasks-per-node=8
+#SBATCH --ntasks-per-node=32
 #SBATCH --nodes=1
 #SBATCH --output=logs/%x_%j.log
 #SBATCH --hint=nomultithread
