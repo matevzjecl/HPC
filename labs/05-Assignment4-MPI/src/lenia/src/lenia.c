@@ -10,28 +10,47 @@
 #include "orbium.h"
 #include "gifenc.h"
 
-// #define GENERATE_GIF
+#define GENERATE_GIF
+
+#define HALO_TAG_UP 100
+#define HALO_TAG_DOWN 101
+
+typedef struct {
+    int di;
+    int dj;
+} Offset;
+
+typedef struct {
+    unsigned int i;
+    unsigned int j;
+} Cell;
 
 // Function to calculate Gaussian
 static inline double gauss(double x, double mu, double sigma)
 {
-    return exp(-0.5 * pow((x - mu) / sigma, 2));
+    double z = (x - mu) / sigma;
+    return exp(-0.5 * z * z);
 }
 
 // Function for growth criteria
-double growth_lenia(double u)
+static inline double growth_lenia(double u)
 {
-    double mu = 0.15;
-    double sigma = 0.015;
-    return -1 + 2 * gauss(u, mu, sigma);
+    const double mu = 0.15;
+    const double inv_sigma = 1.0 / 0.015;
+
+    double z = (u - mu) * inv_sigma;
+    return -1.0 + 2.0 * exp(-0.5 * z * z);
 }
 
 // Function to generate convolution kernel
-double *generate_kernel(double *K, const unsigned int size)
+double *generate_kernel(double *restrict K, const unsigned int size)
 {
-    double mu = 0.5;
-    double sigma = 0.15;
-    int r = (int)size / 2;
+    const double mu = 0.5;
+    const double sigma = 0.15;
+    const int r = (int)size / 2;
+    const int r2 = r * r;
+    const double inv_r = 1.0 / (double)r;
+
     double sum = 0.0;
 
     if (K == NULL)
@@ -43,30 +62,30 @@ double *generate_kernel(double *K, const unsigned int size)
     {
         for (unsigned int x = 0; x < size; x++)
         {
-            int dy = (int)y - r;
-            int dx = (int)x - r;
+            const int dy = (int)y - r;
+            const int dx = (int)x - r;
+            const int d2 = dx * dx + dy * dy;
+            const unsigned int idx = y * size + x;
 
-            double distance = sqrt((double)(dx * dx + dy * dy)) / (double)r;
-
-            K[y * size + x] = gauss(distance, mu, sigma);
-
-            if (distance > 1.0)
+            if (d2 > r2)
             {
-                K[y * size + x] = 0.0;
+                K[idx] = 0.0;
+                continue;
             }
 
-            sum += K[y * size + x];
+            const double distance = sqrt((double)d2) * inv_r;
+            K[idx] = gauss(distance, mu, sigma);
+            sum += K[idx];
         }
     }
 
     if (sum != 0.0)
     {
-        for (unsigned int y = 0; y < size; y++)
+        const double inv_sum = 1.0 / sum;
+
+        for (unsigned int i = 0; i < size * size; i++)
         {
-            for (unsigned int x = 0; x < size; x++)
-            {
-                K[y * size + x] /= sum;
-            }
+            K[i] *= inv_sum;
         }
     }
 
@@ -87,9 +106,9 @@ static inline unsigned int wrap_unsigned_index(int index, unsigned int size)
 
 // Full convolution, useful for serial/reference version
 static inline double *convolve2d(
-    double *result,
-    const double *input,
-    const double *w,
+    double *restrict result,
+    const double *restrict input,
+    const double *restrict w,
     const unsigned int rows,
     const unsigned int cols,
     const unsigned int w_rows,
@@ -134,17 +153,18 @@ static inline double *convolve2d(
     return result;
 }
 
+// Old full-world row convolution, kept for reference
 static double *convolve2d_rows_local_result(
-    double *local_result,
-    const double *input,
-    const double *w,
+    double *restrict local_result,
+    const double *restrict input,
+    const double *restrict w,
     const unsigned int rows,
     const unsigned int cols,
     const unsigned int w_rows,
     const unsigned int w_cols,
     const unsigned int start_row,
     const unsigned int local_rows,
-    const unsigned char *active_local
+    const unsigned char *restrict active_local
 )
 {
     if (local_result == NULL || input == NULL || w == NULL || active_local == NULL)
@@ -195,17 +215,7 @@ static double *convolve2d_rows_local_result(
     return local_result;
 }
 
-typedef struct {
-    int di;
-    int dj;
-} Offset;
-
-typedef struct {
-    unsigned int i;
-    unsigned int j;
-} Cell;
-
-int build_circle_offsets(Offset* offsets, unsigned int kernel_size)
+int build_circle_offsets(Offset *offsets, unsigned int kernel_size)
 {
     int r = (int)kernel_size / 2;
     int count = 0;
@@ -226,8 +236,8 @@ int build_circle_offsets(Offset* offsets, unsigned int kernel_size)
     return count;
 }
 
-void generate_mask_gather(const double* world,
-                          unsigned char* active,
+void generate_mask_gather(const double *world,
+                          unsigned char *active,
                           unsigned int rows,
                           unsigned int cols,
                           unsigned int kernel_size)
@@ -263,8 +273,8 @@ void generate_mask_gather(const double* world,
     }
 }
 
-void generate_mask_scatter(const double* world,
-                           unsigned char* active,
+void generate_mask_scatter(const double *world,
+                           unsigned char *active,
                            unsigned int rows,
                            unsigned int cols,
                            unsigned int kernel_size)
@@ -295,11 +305,11 @@ void generate_mask_scatter(const double* world,
     }
 }
 
-void generate_mask_scatter_fast(const double* world,
-                                unsigned char* active,
+void generate_mask_scatter_fast(const double *world,
+                                unsigned char *active,
                                 unsigned int rows,
                                 unsigned int cols,
-                                const Offset* offsets,
+                                const Offset *offsets,
                                 int offset_count)
 {
     for (unsigned int i = 0; i < rows; i++)
@@ -326,8 +336,8 @@ void generate_mask_scatter_fast(const double* world,
     }
 }
 
-int collect_nonzero_cells(const double* world,
-                          Cell* cells,
+int collect_nonzero_cells(const double *world,
+                          Cell *cells,
                           unsigned int rows,
                           unsigned int cols)
 {
@@ -349,8 +359,8 @@ int collect_nonzero_cells(const double* world,
     return count;
 }
 
-int collect_nonzero_cells_local_rows(const double* world,
-                                     Cell* cells,
+int collect_nonzero_cells_local_rows(const double *world,
+                                     Cell *cells,
                                      unsigned int start_row,
                                      unsigned int local_rows,
                                      unsigned int cols)
@@ -375,12 +385,12 @@ int collect_nonzero_cells_local_rows(const double* world,
     return count;
 }
 
-void generate_mask_from_cells(unsigned char* active,
+void generate_mask_from_cells(unsigned char *active,
                               unsigned int rows,
                               unsigned int cols,
-                              const Cell* cells,
+                              const Cell *cells,
                               int cell_count,
-                              const Offset* offsets,
+                              const Offset *offsets,
                               int offset_count)
 {
     for (int c = 0; c < cell_count; c++)
@@ -404,12 +414,12 @@ void generate_mask_from_cells(unsigned char* active,
     }
 }
 
-void generate_mask_contribution_from_cells(unsigned char* mask_contribution,
+void generate_mask_contribution_from_cells(unsigned char *mask_contribution,
                                            unsigned int rows,
                                            unsigned int cols,
-                                           const Cell* cells,
+                                           const Cell *cells,
                                            int cell_count,
-                                           const Offset* offsets,
+                                           const Offset *offsets,
                                            int offset_count)
 {
     generate_mask_from_cells(
@@ -421,6 +431,256 @@ void generate_mask_contribution_from_cells(unsigned char* mask_contribution,
         offsets,
         offset_count
     );
+}
+
+static void exchange_halo_rows_nonblocking(
+    double *restrict local_world,
+    unsigned int local_rows,
+    unsigned int cols,
+    unsigned int halo,
+    int rank,
+    int size
+)
+{
+    if (halo == 0)
+    {
+        return;
+    }
+
+    /*
+        local_world layout:
+
+        0 ... halo - 1:
+            top halo rows
+
+        halo ... halo + local_rows - 1:
+            real local rows
+
+        halo + local_rows ... halo + local_rows + halo - 1:
+            bottom halo rows
+    */
+
+    const int count = (int)((size_t)halo * (size_t)cols);
+
+    double *top_halo =
+        local_world;
+
+    double *first_real_rows =
+        local_world + (size_t)halo * (size_t)cols;
+
+    double *last_real_rows =
+        local_world + (size_t)local_rows * (size_t)cols;
+
+    double *bottom_halo =
+        local_world + ((size_t)halo + (size_t)local_rows) * (size_t)cols;
+
+    if (size == 1)
+    {
+        memcpy(
+            top_halo,
+            last_real_rows,
+            (size_t)count * sizeof(double)
+        );
+
+        memcpy(
+            bottom_halo,
+            first_real_rows,
+            (size_t)count * sizeof(double)
+        );
+
+        return;
+    }
+
+    int up_rank = rank - 1;
+    int down_rank = rank + 1;
+
+    if (up_rank < 0)
+    {
+        up_rank = size - 1;
+    }
+
+    if (down_rank >= size)
+    {
+        down_rank = 0;
+    }
+
+    MPI_Request requests[4];
+
+    MPI_Irecv(
+        top_halo,
+        count,
+        MPI_DOUBLE,
+        up_rank,
+        HALO_TAG_DOWN,
+        MPI_COMM_WORLD,
+        &requests[0]
+    );
+
+    MPI_Irecv(
+        bottom_halo,
+        count,
+        MPI_DOUBLE,
+        down_rank,
+        HALO_TAG_UP,
+        MPI_COMM_WORLD,
+        &requests[1]
+    );
+
+    MPI_Isend(
+        first_real_rows,
+        count,
+        MPI_DOUBLE,
+        up_rank,
+        HALO_TAG_UP,
+        MPI_COMM_WORLD,
+        &requests[2]
+    );
+
+    MPI_Isend(
+        last_real_rows,
+        count,
+        MPI_DOUBLE,
+        down_rank,
+        HALO_TAG_DOWN,
+        MPI_COMM_WORLD,
+        &requests[3]
+    );
+
+    MPI_Waitall(4, requests, MPI_STATUSES_IGNORE);
+}
+
+static void generate_active_mask_local_scatter_from_halo(
+    unsigned char *restrict active_local,
+    const double *restrict local_world,
+    const unsigned int local_rows,
+    const unsigned int cols,
+    const unsigned int halo,
+    const Offset *restrict offsets,
+    const int offset_count
+)
+{
+    const unsigned int total_local_rows = local_rows + 2 * halo;
+
+    memset(
+        active_local,
+        0,
+        (size_t)local_rows * (size_t)cols * sizeof(*active_local)
+    );
+
+    for (unsigned int src_row = 0; src_row < total_local_rows; src_row++)
+    {
+        const double *restrict world_row =
+            local_world + (size_t)src_row * (size_t)cols;
+
+        for (unsigned int src_col = 0; src_col < cols; src_col++)
+        {
+            if (world_row[src_col] <= 0.0)
+            {
+                continue;
+            }
+
+            for (int k = 0; k < offset_count; k++)
+            {
+                int dst_row_with_halo = (int)src_row + offsets[k].di;
+
+                if (dst_row_with_halo < (int)halo ||
+                    dst_row_with_halo >= (int)(halo + local_rows))
+                {
+                    continue;
+                }
+
+                unsigned int dst_local_row =
+                    (unsigned int)(dst_row_with_halo - (int)halo);
+
+                int dst_col = (int)src_col + offsets[k].dj;
+
+                if (dst_col < 0)
+                {
+                    dst_col += (int)cols;
+                }
+                else if (dst_col >= (int)cols)
+                {
+                    dst_col -= (int)cols;
+                }
+
+                active_local[
+                    (size_t)dst_local_row * (size_t)cols + (unsigned int)dst_col
+                ] = 1;
+            }
+        }
+    }
+}
+
+static double *convolve2d_rows_local_halo(
+    double *restrict local_result,
+    const double *restrict local_world,
+    const double *restrict w,
+    const unsigned int local_rows,
+    const unsigned int cols,
+    const unsigned int halo,
+    const unsigned int w_rows,
+    const unsigned int w_cols,
+    const unsigned char *restrict active_local
+)
+{
+    if (local_result == NULL ||
+        local_world == NULL ||
+        w == NULL ||
+        active_local == NULL)
+    {
+        return local_result;
+    }
+
+    const int row_center = (int)w_rows / 2;
+    const int col_center = (int)w_cols / 2;
+
+    for (unsigned int local_row = 0; local_row < local_rows; local_row++)
+    {
+        double *restrict result_row =
+            local_result + (size_t)local_row * (size_t)cols;
+
+        const unsigned char *restrict active_row =
+            active_local + (size_t)local_row * (size_t)cols;
+
+        const unsigned int real_row = halo + local_row;
+
+        for (unsigned int col = 0; col < cols; col++)
+        {
+            if (!active_row[col])
+            {
+                result_row[col] = 0.0;
+                continue;
+            }
+
+            double sum = 0.0;
+
+            for (unsigned int kr = 0; kr < w_rows; kr++)
+            {
+                const int src_row =
+                    (int)real_row - row_center + (int)kr;
+
+                const double *restrict world_row =
+                    local_world + (size_t)src_row * (size_t)cols;
+
+                const double *restrict kernel_row =
+                    w + (size_t)kr * (size_t)w_cols;
+
+                for (unsigned int kc = 0; kc < w_cols; kc++)
+                {
+                    unsigned int src_col = wrap_unsigned_index(
+                        (int)col - col_center + (int)kc,
+                        cols
+                    );
+
+                    sum += kernel_row[kc] * world_row[src_col];
+                }
+            }
+
+            result_row[col] = sum;
+        }
+    }
+
+    return local_result;
 }
 
 // Function to evolve Lenia
@@ -465,7 +725,7 @@ double *evolve_lenia(
             fprintf(
                 stderr,
                 "Error: number of rows (%u) must be divisible by number of MPI ranks (%d).\n"
-                "For non-divisible row counts, use MPI_Allgatherv/Gatherv instead.\n",
+                "For non-divisible row counts, use MPI_Scatterv/Gatherv instead.\n",
                 sim_rows,
                 size
             );
@@ -474,11 +734,45 @@ double *evolve_lenia(
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
-    size_t total_count_size = (size_t)sim_rows * (size_t)sim_cols;
-    size_t local_rows_size = (size_t)sim_rows / (size_t)size;
-    size_t local_count_size = local_rows_size * (size_t)sim_cols;
+    const unsigned int halo = sim_kernel_size / 2;
 
-    if (total_count_size > (size_t)INT_MAX || local_count_size > (size_t)INT_MAX)
+    size_t total_count_size =
+        (size_t)sim_rows * (size_t)sim_cols;
+
+    size_t local_rows_size =
+        (size_t)sim_rows / (size_t)size;
+
+    size_t local_count_size =
+        local_rows_size * (size_t)sim_cols;
+
+    size_t halo_count_size =
+        (size_t)halo * (size_t)sim_cols;
+
+    size_t local_with_halo_rows_size =
+        local_rows_size + 2 * (size_t)halo;
+
+    size_t local_with_halo_count_size =
+        local_with_halo_rows_size * (size_t)sim_cols;
+
+    if (local_rows_size < (size_t)halo)
+    {
+        if (rank == 0)
+        {
+            fprintf(
+                stderr,
+                "Error: local_rows (%zu) must be >= halo size (%u).\n"
+                "Use fewer MPI ranks or a smaller kernel size.\n",
+                local_rows_size,
+                halo
+            );
+        }
+
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
+    if (total_count_size > (size_t)INT_MAX ||
+        local_count_size > (size_t)INT_MAX ||
+        halo_count_size > (size_t)INT_MAX)
     {
         if (rank == 0)
         {
@@ -492,10 +786,7 @@ double *evolve_lenia(
     }
 
     unsigned int local_rows = (unsigned int)local_rows_size;
-    unsigned int start_row = (unsigned int)rank * local_rows;
-    int total_count = (int)total_count_size;
     int local_count = (int)local_count_size;
-    int start_i = (int)((size_t)start_row * (size_t)sim_cols);
 
 #ifdef GENERATE_GIF
     ge_GIF *gif = NULL;
@@ -525,24 +816,32 @@ double *evolve_lenia(
         sizeof(double)
     );
 
+    /*
+        Full world is now only used for:
+        - initial placement on rank 0
+        - optional GIF frames
+        - final result after final MPI_Allgather
+
+        The actual simulation uses only local_world + halo rows.
+    */
     double *world = (double *)calloc(
         total_count_size,
+        sizeof(double)
+    );
+
+    double *local_world = (double *)calloc(
+        local_with_halo_count_size,
+        sizeof(double)
+    );
+
+    double *local_next = (double *)calloc(
+        local_with_halo_count_size,
         sizeof(double)
     );
 
     double *local_tmp = (double *)calloc(
         local_count_size,
         sizeof(double)
-    );
-
-    double *local_next = (double *)calloc(
-        local_count_size,
-        sizeof(double)
-    );
-
-    unsigned char *mask_contribution = (unsigned char *)calloc(
-        total_count_size,
-        sizeof(unsigned char)
     );
 
     unsigned char *active_local = (unsigned char *)calloc(
@@ -554,29 +853,23 @@ double *evolve_lenia(
         (size_t)sim_kernel_size * (size_t)sim_kernel_size * sizeof(Offset)
     );
 
-    Cell *cells = (Cell *)malloc(
-        local_count_size * sizeof(Cell)
-    );
-
     if (w == NULL ||
         world == NULL ||
-        local_tmp == NULL ||
+        local_world == NULL ||
         local_next == NULL ||
-        mask_contribution == NULL ||
+        local_tmp == NULL ||
         active_local == NULL ||
-        offsets == NULL ||
-        cells == NULL)
+        offsets == NULL)
     {
         fprintf(stderr, "Rank %d: failed to allocate simulation arrays.\n", rank);
 
         free(w);
         free(world);
-        free(local_tmp);
+        free(local_world);
         free(local_next);
-        free(mask_contribution);
+        free(local_tmp);
         free(active_local);
         free(offsets);
-        free(cells);
 
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
@@ -605,9 +898,15 @@ double *evolve_lenia(
         }
     }
 
-    MPI_Bcast(
+    double *local_real =
+        local_world + (size_t)halo * (size_t)sim_cols;
+
+    MPI_Scatter(
         world,
-        total_count,
+        local_count,
+        MPI_DOUBLE,
+        local_real,
+        local_count,
         MPI_DOUBLE,
         0,
         MPI_COMM_WORLD
@@ -627,59 +926,79 @@ double *evolve_lenia(
 
     for (unsigned int step = 0; step < sim_steps; step++)
     {
-        memset(
-            mask_contribution,
-            0,
-            total_count_size * sizeof(*mask_contribution)
-        );
-
-        int cell_count = collect_nonzero_cells_local_rows(
-            world,
-            cells,
-            start_row,
+        /*
+            Point 4:
+            Only boundary halo rows are exchanged here.
+            No full-world MPI_Allgather happens during normal steps.
+        */
+        exchange_halo_rows_nonblocking(
+            local_world,
             local_rows,
-            sim_cols
+            sim_cols,
+            halo,
+            rank,
+            size
         );
 
-        generate_mask_contribution_from_cells(
-            mask_contribution,
-            sim_rows,
+        /*
+            Fast sparse mask:
+            Uses local rows + halo rows only.
+            No global mask_contribution and no MPI_Reduce_scatter_block.
+        */
+        generate_active_mask_local_scatter_from_halo(
+            active_local,
+            local_world,
+            local_rows,
             sim_cols,
-            cells,
-            cell_count,
+            halo,
             offsets,
             offset_count
         );
 
-        MPI_Reduce_scatter_block(
-            mask_contribution,
-            active_local,
-            local_count,
-            MPI_UNSIGNED_CHAR,
-            MPI_MAX,
-            MPI_COMM_WORLD
-        );
-
-        convolve2d_rows_local_result(
+        convolve2d_rows_local_halo(
             local_tmp,
-            world,
+            local_world,
             w,
-            sim_rows,
-            sim_cols,
-            sim_kernel_size,
-            sim_kernel_size,
-            start_row,
             local_rows,
+            sim_cols,
+            halo,
+            sim_kernel_size,
+            sim_kernel_size,
             active_local
         );
 
+        local_real =
+            local_world + (size_t)halo * (size_t)sim_cols;
+
+        double *restrict local_next_real =
+            local_next + (size_t)halo * (size_t)sim_cols;
+
         for (int i = 0; i < local_count; i++)
         {
-            double value = world[start_i + i] + sim_dt * growth_lenia(local_tmp[i]);
-            local_next[i] = fmin(1.0, fmax(0.0, value));
+            double value = local_real[i] + sim_dt * growth_lenia(local_tmp[i]);
+
+            if (value < 0.0)
+            {
+                value = 0.0;
+            }
+            else if (value > 1.0)
+            {
+                value = 1.0;
+            }
+
+            local_next_real[i] = value;
         }
+
+        double *swap_tmp = local_world;
+        local_world = local_next;
+        local_next = swap_tmp;
+
+#ifdef GENERATE_GIF
+        local_real =
+            local_world + (size_t)halo * (size_t)sim_cols;
+
         MPI_Allgather(
-            local_next,
+            local_real,
             local_count,
             MPI_DOUBLE,
             world,
@@ -688,7 +1007,6 @@ double *evolve_lenia(
             MPI_COMM_WORLD
         );
 
-#ifdef GENERATE_GIF
         if (rank == 0)
         {
             for (unsigned int i = 0; i < sim_rows * sim_cols; i++)
@@ -701,6 +1019,19 @@ double *evolve_lenia(
 #endif
     }
 
+    local_real =
+        local_world + (size_t)halo * (size_t)sim_cols;
+
+    MPI_Allgather(
+        local_real,
+        local_count,
+        MPI_DOUBLE,
+        world,
+        local_count,
+        MPI_DOUBLE,
+        MPI_COMM_WORLD
+    );
+
 #ifdef GENERATE_GIF
     if (rank == 0)
     {
@@ -709,12 +1040,11 @@ double *evolve_lenia(
 #endif
 
     free(w);
-    free(local_tmp);
+    free(local_world);
     free(local_next);
-    free(mask_contribution);
+    free(local_tmp);
     free(active_local);
     free(offsets);
-    free(cells);
 
     return world;
 }
