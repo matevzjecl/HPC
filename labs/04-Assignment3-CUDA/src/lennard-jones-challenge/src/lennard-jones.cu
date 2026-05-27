@@ -195,6 +195,21 @@ static float get_env_float_or_default(const char *name, float default_value) {
     return parsed;
 }
 
+static void enable_mapped_host_memory(void) {
+    /*
+        Needed for cudaHostAllocMapped on some CUDA/runtime combinations.
+        If a CUDA context already exists, cudaSetDeviceFlags can return
+        cudaErrorSetOnActiveProcess. In that case we continue and let
+        cudaHostAlloc/cudaHostGetDevicePointer report any real failure.
+    */
+    cudaError_t status = cudaSetDeviceFlags(cudaDeviceMapHost);
+
+    if (status != cudaSuccess && status != cudaErrorSetOnActiveProcess) {
+        checkCudaErrors(status);
+    }
+}
+
+
 // compute kinetic energy of the system on CPU
 // Kept as unused/simple CPU implementation.
 double compute_ke(const Particle *particles, unsigned int n) {
@@ -435,6 +450,10 @@ __device__ __forceinline__ real wrap_position(real value) {
     }
 
     return value;
+}
+
+__device__ __forceinline__ real fast_inv_r2(real r2) {
+    return __fdividef(REAL_C(1.0), r2);
 }
 
 __global__ void compute_ke_partial_kernel(
@@ -692,7 +711,7 @@ __global__ void compute_forces_verlet_kernel(
                 continue;
             }
 
-            const real inv_r2 = REAL_C(1.0) / r2;
+            const real inv_r2 = fast_inv_r2(r2);
             const real sr2 = SIGMA2 * inv_r2;
             const real sr6 = sr2 * sr2 * sr2;
             const real sr12 = sr6 * sr6;
@@ -786,7 +805,7 @@ __global__ void compute_forces_verlet_no_energy_kernel(
             continue;
         }
 
-        const real inv_r2 = REAL_C(1.0) / r2;
+        const real inv_r2 = fast_inv_r2(r2);
         const real sr2 = SIGMA2 * inv_r2;
         const real sr6 = sr2 * sr2 * sr2;
         const real sr12 = sr6 * sr6;
@@ -1072,6 +1091,7 @@ double compute_forces_verlet_cuda(
     real *&d_temp_vz,
     int *&d_temp_particle_cell_indices,
     int *__restrict__ d_needs_rebuild,
+    int *__restrict__ h_needs_rebuild,
     const int *__restrict__ d_cell_neighbors,
     int *__restrict__ d_neighbor_counts,
     int *__restrict__ d_neighbor_list,
@@ -1084,16 +1104,14 @@ double compute_forces_verlet_cuda(
     int rebuild_block_size,
     int update_velocity_second_half
 ) {
-    int h_needs_rebuild = 0;
+    /*
+        d_needs_rebuild points to mapped pinned host memory.
+        Synchronize before reading the host-side flag so that any previous
+        kernel writes with atomicExch(needs_rebuild, 1) are visible to CPU.
+    */
+    checkCudaErrors(cudaDeviceSynchronize());
 
-    checkCudaErrors(cudaMemcpy(
-        &h_needs_rebuild,
-        d_needs_rebuild,
-        sizeof(int),
-        cudaMemcpyDeviceToHost
-    ));
-
-    if (h_needs_rebuild) {
+    if (*h_needs_rebuild) {
         rebuild_cells_cuda(
             d_x_arr,
             d_y_arr,
@@ -1131,14 +1149,7 @@ double compute_forces_verlet_cuda(
             rebuild_block_size
         );
 
-        h_needs_rebuild = 0;
-
-        checkCudaErrors(cudaMemcpy(
-            d_needs_rebuild,
-            &h_needs_rebuild,
-            sizeof(int),
-            cudaMemcpyHostToDevice
-        ));
+        *h_needs_rebuild = 0;
     }
 
     if (compute_energy) {
@@ -1235,6 +1246,8 @@ static SimulationResult run_simulation_cuda_internal(
         return out;
     }
 
+    enable_mapped_host_memory();
+
     force_block_size = sanitize_block_size(force_block_size, FORCE_BLOCK_SIZE);
     ke_block_size = sanitize_block_size(ke_block_size, KE_BLOCK_SIZE);
     update_block_size = sanitize_block_size(update_block_size, UPDATE_BLOCK_SIZE);
@@ -1311,6 +1324,7 @@ static SimulationResult run_simulation_cuda_internal(
     int *d_cell_start = NULL;
     int *d_next_pos = NULL;
     int *d_temp_particle_cell_indices = NULL;
+    int *h_needs_rebuild = NULL;
     int *d_needs_rebuild = NULL;
     int *d_cell_neighbors = NULL;
 
@@ -1339,7 +1353,18 @@ static SimulationResult run_simulation_cuda_internal(
     checkCudaErrors(cudaMalloc((void **)&d_cell_start, (size_t)(num_cells + 1) * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_next_pos, (size_t)num_cells * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_temp_particle_cell_indices, (size_t)n * sizeof(int)));
-    checkCudaErrors(cudaMalloc((void **)&d_needs_rebuild, sizeof(int)));
+
+    checkCudaErrors(cudaHostAlloc(
+        (void **)&h_needs_rebuild,
+        sizeof(int),
+        cudaHostAllocMapped
+    ));
+
+    checkCudaErrors(cudaHostGetDevicePointer(
+        (void **)&d_needs_rebuild,
+        h_needs_rebuild,
+        0
+    ));
 
     checkCudaErrors(cudaMalloc((void **)&d_neighbor_counts, (size_t)n * sizeof(int)));
     checkCudaErrors(cudaMalloc(
@@ -1387,14 +1412,7 @@ static SimulationResult run_simulation_cuda_internal(
     free(cell_neighbors);
     cell_neighbors = NULL;
 
-    int h_needs_rebuild = 1;
-
-    checkCudaErrors(cudaMemcpy(
-        d_needs_rebuild,
-        &h_needs_rebuild,
-        sizeof(int),
-        cudaMemcpyHostToDevice
-    ));
+    *h_needs_rebuild = 1;
 
     out.start_potential = compute_forces_verlet_cuda(
         d_x_arr,
@@ -1419,6 +1437,7 @@ static SimulationResult run_simulation_cuda_internal(
         d_temp_vz,
         d_temp_particle_cell_indices,
         d_needs_rebuild,
+        h_needs_rebuild,
         d_cell_neighbors,
         d_neighbor_counts,
         d_neighbor_list,
@@ -1492,6 +1511,7 @@ static SimulationResult run_simulation_cuda_internal(
             d_temp_vz,
             d_temp_particle_cell_indices,
             d_needs_rebuild,
+            h_needs_rebuild,
             d_cell_neighbors,
             d_neighbor_counts,
             d_neighbor_list,
@@ -1584,7 +1604,7 @@ static SimulationResult run_simulation_cuda_internal(
     checkCudaErrors(cudaFree(d_cell_start));
     checkCudaErrors(cudaFree(d_next_pos));
     checkCudaErrors(cudaFree(d_temp_particle_cell_indices));
-    checkCudaErrors(cudaFree(d_needs_rebuild));
+    checkCudaErrors(cudaFreeHost(h_needs_rebuild));
 
     checkCudaErrors(cudaFree(d_cell_neighbors));
 
