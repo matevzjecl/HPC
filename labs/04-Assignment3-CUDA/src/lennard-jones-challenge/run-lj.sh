@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus-per-node=2
 #SBATCH --nodes=1
-#SBATCH --output=lj_out.log
+#SBATCH --output=logs/%x-%j.out
 
 #LOAD MODULES 
 module load CUDA

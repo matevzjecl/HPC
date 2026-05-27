@@ -14,8 +14,8 @@ void print_help(const char *exe) {
 
 int main(int argc, char **argv) {
     // default parameters
-    unsigned int nsteps = 100;
-    unsigned int n = 100;
+    unsigned int nsteps = 10000;
+    unsigned int n = 20000;
     double density = 0.95;
     double temperature = 0.5;
     unsigned int seed = 42;
@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
 
     //run simulation and measure time
     double start = omp_get_wtime();
-    result = run_simulation(particles, n, nsteps, box_size, 1);
+    result = run_simulation(particles, n, nsteps, box_size, 0);
     double stop = omp_get_wtime();
     printf("\nFinished simulation.\n");
     printf("Final KE: %10.4f | delta: %+.4f\n", result.final_kinetic, result.final_kinetic - result.start_kinetic);
