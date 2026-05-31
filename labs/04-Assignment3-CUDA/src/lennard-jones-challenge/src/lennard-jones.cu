@@ -22,7 +22,7 @@ typedef float real;
 #define REAL_C(x) ((real)(x))
 
 #ifndef R_SKIN
-#define R_SKIN 0.4f
+#define R_SKIN 0.2f
 #endif
 
 #ifndef FORCE_BLOCK_SIZE
@@ -30,7 +30,7 @@ typedef float real;
 #endif
 
 #ifndef KE_BLOCK_SIZE
-#define KE_BLOCK_SIZE 256
+#define KE_BLOCK_SIZE 32
 #endif
 
 #ifndef UPDATE_BLOCK_SIZE
@@ -38,11 +38,15 @@ typedef float real;
 #endif
 
 #ifndef REBUILD_BLOCK_SIZE
-#define REBUILD_BLOCK_SIZE 256
+#define REBUILD_BLOCK_SIZE 128
 #endif
 
-#ifndef LJ_COPY_BACK_PARTICLES
-#define LJ_COPY_BACK_PARTICLES 0
+#ifndef LJ_MAX_NEIGHBORS
+#define LJ_MAX_NEIGHBORS 1024
+#endif
+
+#ifndef LJ_LOG_MAX_NEIGHBORS
+#define LJ_LOG_MAX_NEIGHBORS 0
 #endif
 
 #define R_CUT_REAL REAL_C(R_CUT)
@@ -113,7 +117,24 @@ static inline constants3d make_constants(double box_size, float r_skin, unsigned
     c.inv_cell_size_y = REAL_C(1.0) / c.cell_size_y;
     c.inv_cell_size_z = REAL_C(1.0) / c.cell_size_z;
 
-    c.max_neighbors = (int)n - 1;
+    /*
+        Important fix:
+        Old version used n - 1, which makes the neighbor list O(n^2).
+        For n = 100000 this would allocate around 40 GB just for d_neighbor_list.
+
+        This caps the stored neighbor list to a practical fixed size.
+        The temporary debug array d_neighbor_total_counts still records the true count.
+    */
+    if (n <= 1) {
+        c.max_neighbors = 1;
+    } else {
+        const int full_max = (int)n - 1;
+        c.max_neighbors = full_max < LJ_MAX_NEIGHBORS ? full_max : LJ_MAX_NEIGHBORS;
+
+        if (c.max_neighbors < 1) {
+            c.max_neighbors = 1;
+        }
+    }
 
     return c;
 }
@@ -123,15 +144,15 @@ double random_double(void) {
     return (double)rand() * inv_rand_max;
 }
 
-static double relative_change(double current, double previous) {
-    const double eps = 1e-12;
-
-    if (fabs(previous) < eps) {
-        return 0.0;
-    }
-
-    return (current - previous) / previous;
-}
+// static double relative_change(double current, double previous) {
+//     const double eps = 1e-12;
+//
+//     if (fabs(previous) < eps) {
+//         return 0.0;
+//     }
+//
+//     return (current - previous) / previous;
+// }
 
 static int is_power_of_two_int(int x) {
     return x > 0 && ((x & (x - 1)) == 0);
@@ -147,10 +168,6 @@ static int sanitize_block_size(int value, int fallback) {
         return fallback;
     }
 
-    /*
-        The energy reduction kernels assume power-of-two block sizes.
-        So use values like 32, 64, 128, 256, 512, 1024.
-    */
     if (!is_power_of_two_int(value)) {
         fprintf(stderr, "Warning: block size %d is not power of two, using %d\n", value, fallback);
         return fallback;
@@ -196,31 +213,11 @@ static float get_env_float_or_default(const char *name, float default_value) {
 }
 
 static void enable_mapped_host_memory(void) {
-    /*
-        Needed for cudaHostAllocMapped on some CUDA/runtime combinations.
-        If a CUDA context already exists, cudaSetDeviceFlags can return
-        cudaErrorSetOnActiveProcess. In that case we continue and let
-        cudaHostAlloc/cudaHostGetDevicePointer report any real failure.
-    */
     cudaError_t status = cudaSetDeviceFlags(cudaDeviceMapHost);
 
     if (status != cudaSuccess && status != cudaErrorSetOnActiveProcess) {
         checkCudaErrors(status);
     }
-}
-
-
-// compute kinetic energy of the system on CPU
-// Kept as unused/simple CPU implementation.
-double compute_ke(const Particle *particles, unsigned int n) {
-    double ke = 0.0;
-
-    for (unsigned int i = 0; i < n; ++i) {
-        const Particle *p = &particles[i];
-        ke += 0.5 * (p->vx * p->vx + p->vy * p->vy + p->vz * p->vz);
-    }
-
-    return ke;
 }
 
 int initialize_particles(
@@ -233,56 +230,45 @@ int initialize_particles(
 ) {
     srand(seed);
 
-    const double inv_n = 1.0 / (double)n;
-
-    const unsigned int n_side = (unsigned int)ceil(cbrt((double)n));
-    const double inv_n_side = 1.0 / (double)n_side;
-
-    const double placement_size = placement_fraction * box_size;
-    const double offset = 0.5 * (box_size - placement_size);
-    const double delta = placement_size * inv_n_side;
-    const double jitter_delta = JITTER * delta;
+    unsigned int n_side = (unsigned int)ceil(cbrt((double)n));
+    double placement_size = placement_fraction * box_size;
+    double offset = 0.5 * (box_size - placement_size);
+    double delta = placement_size / (double)n_side;
 
     double mean_vx = 0.0;
     double mean_vy = 0.0;
     double mean_vz = 0.0;
 
-    // place particles in the middle of the grid with some random jitter and assign random velocities
     for (unsigned int k = 0; k < n; k++) {
         particles[k].id = k;
 
-        const unsigned int ix = k % n_side;
-        const unsigned int iy = (k / n_side) % n_side;
-        const unsigned int iz = k / (n_side * n_side);
+        unsigned int ix = k % n_side;
+        unsigned int iy = (k / n_side) % n_side;
+        unsigned int iz = k / (n_side * n_side);
 
-        const double x0 = offset + (0.5 + (double)ix) * delta;
-        const double y0 = offset + (0.5 + (double)iy) * delta;
-        const double z0 = offset + (0.5 + (double)iz) * delta;
+        double x0 = offset + (0.5 + (double)ix) * delta;
+        double y0 = offset + (0.5 + (double)iy) * delta;
+        double z0 = offset + (0.5 + (double)iz) * delta;
 
-        particles[k].x = x0 + (2.0 * random_double() - 1.0) * jitter_delta;
-        particles[k].y = y0 + (2.0 * random_double() - 1.0) * jitter_delta;
-        particles[k].z = z0 + (2.0 * random_double() - 1.0) * jitter_delta;
+        particles[k].x = x0 + (2.0 * random_double() - 1.0) * JITTER * delta;
+        particles[k].y = y0 + (2.0 * random_double() - 1.0) * JITTER * delta;
+        particles[k].z = z0 + (2.0 * random_double() - 1.0) * JITTER * delta;
 
         particles[k].vx = 2.0 * random_double() - 1.0;
         particles[k].vy = 2.0 * random_double() - 1.0;
         particles[k].vz = 2.0 * random_double() - 1.0;
-
-        particles[k].fx = 0.0;
-        particles[k].fy = 0.0;
-        particles[k].fz = 0.0;
 
         mean_vx += particles[k].vx;
         mean_vy += particles[k].vy;
         mean_vz += particles[k].vz;
     }
 
-    mean_vx *= inv_n;
-    mean_vy *= inv_n;
-    mean_vz *= inv_n;
+    mean_vx /= (double)n;
+    mean_vy /= (double)n;
+    mean_vz /= (double)n;
 
     double ke = 0.0;
 
-    // subtract mean velocity to ensure zero net momentum and compute initial kinetic energy
     for (unsigned int k = 0; k < n; k++) {
         particles[k].vx -= mean_vx;
         particles[k].vy -= mean_vy;
@@ -295,14 +281,13 @@ int initialize_particles(
         );
     }
 
-    const double current_temperature = ke * inv_n;
+    double current_temperature = ke / (double)n;
 
     if (current_temperature <= 0.0) {
         return 0;
     }
 
-    // scale velocities to match the desired initial temperature of the system
-    const double scale = sqrt(temperature / current_temperature);
+    double scale = sqrt(temperature / current_temperature);
 
     for (unsigned int k = 0; k < n; k++) {
         particles[k].vx *= scale;
@@ -311,123 +296,6 @@ int initialize_particles(
     }
 
     return 1;
-}
-
-// apply periodic boundary conditions to ensure particles stay within the simulation box
-// Kept as unused/simple CPU implementation.
-void wrap_positions(Particle *particles, unsigned int n, double box_size) {
-    for (unsigned int i = 0; i < n; ++i) {
-        Particle *p = &particles[i];
-
-        double wx = fmod(p->x, box_size);
-        double wy = fmod(p->y, box_size);
-        double wz = fmod(p->z, box_size);
-
-        if (wx < 0.0) {
-            wx += box_size;
-        }
-
-        if (wy < 0.0) {
-            wy += box_size;
-        }
-
-        if (wz < 0.0) {
-            wz += box_size;
-        }
-
-        p->x = wx;
-        p->y = wy;
-        p->z = wz;
-    }
-}
-
-// shift potential to ensure it goes to zero at the cutoff distance, improving energy conservation
-double compute_v_shift(void) {
-    return V_SHIFT;
-}
-
-// Original O(n^2) CPU force computation. Kept unused.
-double compute_forces(Particle *particles, unsigned int n, double box_size) {
-    for (unsigned int i = 0; i < n; ++i) {
-        particles[i].fx = 0.0;
-        particles[i].fy = 0.0;
-        particles[i].fz = 0.0;
-    }
-
-    double pe = 0.0;
-    const double v_shift = compute_v_shift();
-
-    for (unsigned int i = 0; i < n; ++i) {
-        Particle *pi = &particles[i];
-
-        for (unsigned int j = 0; j < n; ++j) {
-            if (j == i) {
-                continue;
-            }
-
-            Particle *pj = &particles[j];
-
-            double dx = pi->x - pj->x;
-            double dy = pi->y - pj->y;
-            double dz = pi->z - pj->z;
-
-            dx -= box_size * nearbyint(dx / box_size);
-            dy -= box_size * nearbyint(dy / box_size);
-            dz -= box_size * nearbyint(dz / box_size);
-
-            const double r2 = dx * dx + dy * dy + dz * dz;
-
-            if (r2 >= R_CUT2 || r2 == 0.0) {
-                continue;
-            }
-
-            const double inv_r2 = 1.0 / r2;
-            const double sr2 = SIGMA2 * inv_r2;
-            const double sr6 = sr2 * sr2 * sr2;
-            const double sr12 = sr6 * sr6;
-
-            const double fij =
-                TWENTYFOUR_EPSILON * (2.0 * sr12 - sr6) * inv_r2;
-
-            pi->fx += fij * dx;
-            pi->fy += fij * dy;
-            pi->fz += fij * dz;
-
-            const double vij = FOUR_EPSILON * (sr12 - sr6) - v_shift;
-            pe += 0.5 * vij;
-        }
-    }
-
-    return pe;
-}
-
-// Original CPU leapfrog step. Kept unused.
-double leapfrog_step(Particle *particles, unsigned int n, double box_size) {
-    for (unsigned int i = 0; i < n; ++i) {
-        Particle *p = &particles[i];
-
-        p->vx += HALF_DT * p->fx;
-        p->vy += HALF_DT * p->fy;
-        p->vz += HALF_DT * p->fz;
-
-        p->x += DT * p->vx;
-        p->y += DT * p->vy;
-        p->z += DT * p->vz;
-    }
-
-    wrap_positions(particles, n, box_size);
-
-    const double pe = compute_forces(particles, n, box_size);
-
-    for (unsigned int i = 0; i < n; ++i) {
-        Particle *p = &particles[i];
-
-        p->vx += HALF_DT * p->fx;
-        p->vy += HALF_DT * p->fy;
-        p->vz += HALF_DT * p->fz;
-    }
-
-    return pe;
 }
 
 __device__ __forceinline__ real minimum_image(real d) {
@@ -564,6 +432,7 @@ __global__ void scatter_particles_kernel(
     const real *__restrict__ vx,
     const real *__restrict__ vy,
     const real *__restrict__ vz,
+    const int *__restrict__ particle_ids,
     unsigned int n,
     const int *__restrict__ particle_cell_indices,
     int *__restrict__ next_pos,
@@ -573,6 +442,7 @@ __global__ void scatter_particles_kernel(
     real *__restrict__ temp_vx,
     real *__restrict__ temp_vy,
     real *__restrict__ temp_vz,
+    int *__restrict__ temp_particle_ids,
     int *__restrict__ temp_particle_cell_indices
 ) {
     const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -592,6 +462,7 @@ __global__ void scatter_particles_kernel(
     temp_vy[pos] = vy[i];
     temp_vz[pos] = vz[i];
 
+    temp_particle_ids[pos] = particle_ids[i];
     temp_particle_cell_indices[pos] = cell;
 }
 
@@ -603,9 +474,11 @@ __global__ void build_verlet_list_from_sorted_particles_kernel(
     const int *__restrict__ cell_start,
     const int *__restrict__ cell_neighbors,
     int *__restrict__ neighbor_counts,
+    int *__restrict__ neighbor_total_counts,
     int *__restrict__ neighbor_list,
     unsigned int n,
-    float r_skin
+    float r_skin,
+    int *__restrict__ neighbor_overflow
 ) {
     const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -624,7 +497,8 @@ __global__ void build_verlet_list_from_sorted_particles_kernel(
     const real yi = y[i];
     const real zi = z[i];
 
-    int count = 0;
+    int stored_count = 0;
+    int total_count = 0;
 
     for (int k = 0; k < NEIGHBOR_COUNT; ++k) {
         const int cell_j = cell_neighbors[cell_i * NEIGHBOR_COUNT + k];
@@ -648,15 +522,24 @@ __global__ void build_verlet_list_from_sorted_particles_kernel(
             const real dist2 = dx * dx + dy * dy + dz * dz;
 
             if (dist2 < r_list2) {
-                if (count < max_neighbors) {
-                    neighbor_list[(size_t)count * (size_t)n + (size_t)i] = j;
-                    count++;
+                total_count++;
+
+                if (stored_count < max_neighbors) {
+                    neighbor_list[(size_t)stored_count * (size_t)n + (size_t)i] = j;
+                    stored_count++;
+                } else {
+                    atomicExch(neighbor_overflow, 1);
                 }
             }
         }
     }
 
-    neighbor_counts[i] = count;
+    /*
+        neighbor_counts is the stored/capped count used by the force kernel.
+        neighbor_total_counts is the true count used only for temporary logging.
+    */
+    neighbor_counts[i] = stored_count;
+    neighbor_total_counts[i] = total_count;
 }
 
 __global__ void compute_forces_verlet_kernel(
@@ -922,13 +805,6 @@ void build_cell_neighbors_full(
     }
 }
 
-void build_cell_neighbors(
-    int *__restrict__ cell_neighbors,
-    const constants3d *__restrict__ c
-) {
-    build_cell_neighbors_full(cell_neighbors, c);
-}
-
 void rebuild_cells_cuda(
     real *&d_x_arr,
     real *&d_y_arr,
@@ -938,7 +814,7 @@ void rebuild_cells_cuda(
     real *&d_vz_arr,
     unsigned int n,
     int *&d_particle_cell_indices,
-    int *__restrict__ d_particle_ids,
+    int *&d_particle_ids,
     int *__restrict__ d_cell_start,
     int *__restrict__ d_next_pos,
     real *&d_temp_x,
@@ -947,12 +823,11 @@ void rebuild_cells_cuda(
     real *&d_temp_vx,
     real *&d_temp_vy,
     real *&d_temp_vz,
+    int *&d_temp_particle_ids,
     int *&d_temp_particle_cell_indices,
     int num_cells,
     int rebuild_block_size
 ) {
-    (void)d_particle_ids;
-
     const int block_size = sanitize_block_size(rebuild_block_size, REBUILD_BLOCK_SIZE);
     const int grid_size = (int)((n + block_size - 1) / block_size);
 
@@ -994,6 +869,7 @@ void rebuild_cells_cuda(
         d_vx_arr,
         d_vy_arr,
         d_vz_arr,
+        d_particle_ids,
         n,
         d_particle_cell_indices,
         d_next_pos,
@@ -1003,6 +879,7 @@ void rebuild_cells_cuda(
         d_temp_vx,
         d_temp_vy,
         d_temp_vz,
+        d_temp_particle_ids,
         d_temp_particle_cell_indices
     );
     checkCudaErrors(cudaGetLastError());
@@ -1013,6 +890,7 @@ void rebuild_cells_cuda(
     std::swap(d_vx_arr, d_temp_vx);
     std::swap(d_vy_arr, d_temp_vy);
     std::swap(d_vz_arr, d_temp_vz);
+    std::swap(d_particle_ids, d_temp_particle_ids);
     std::swap(d_particle_cell_indices, d_temp_particle_cell_indices);
 
     checkCudaErrors(cudaMemcpy(
@@ -1045,13 +923,17 @@ static void build_verlet_list_cuda(
     const int *__restrict__ d_cell_start,
     const int *__restrict__ d_cell_neighbors,
     int *__restrict__ d_neighbor_counts,
+    int *__restrict__ d_neighbor_total_counts,
     int *__restrict__ d_neighbor_list,
+    int *__restrict__ d_neighbor_overflow,
     unsigned int n,
     float r_skin,
     int rebuild_block_size
 ) {
     const int block_size = sanitize_block_size(rebuild_block_size, REBUILD_BLOCK_SIZE);
     const int grid_size = (int)((n + block_size - 1) / block_size);
+
+    checkCudaErrors(cudaMemset(d_neighbor_overflow, 0, sizeof(int)));
 
     build_verlet_list_from_sorted_particles_kernel<<<grid_size, block_size>>>(
         d_x_arr,
@@ -1061,11 +943,73 @@ static void build_verlet_list_cuda(
         d_cell_start,
         d_cell_neighbors,
         d_neighbor_counts,
+        d_neighbor_total_counts,
         d_neighbor_list,
         n,
-        r_skin
+        r_skin,
+        d_neighbor_overflow
     );
     checkCudaErrors(cudaGetLastError());
+
+#if LJ_LOG_MAX_NEIGHBORS
+    thrust::device_ptr<int> total_counts_ptr(d_neighbor_total_counts);
+
+    const int h_max_neighbors_seen = thrust::reduce(
+        total_counts_ptr,
+        total_counts_ptr + n,
+        0,
+        thrust::maximum<int>()
+    );
+
+    int h_neighbor_overflow = 0;
+
+    checkCudaErrors(cudaMemcpy(
+        &h_neighbor_overflow,
+        d_neighbor_overflow,
+        sizeof(int),
+        cudaMemcpyDeviceToHost
+    ));
+
+    const int stored_cap =
+        n <= 1
+            ? 1
+            : (((int)n - 1) < LJ_MAX_NEIGHBORS ? ((int)n - 1) : LJ_MAX_NEIGHBORS);
+
+    fprintf(
+        stderr,
+        "Neighbor debug: true_max_neighbors=%d stored_cap=%d LJ_MAX_NEIGHBORS=%d overflow=%s\n",
+        h_max_neighbors_seen,
+        stored_cap,
+        LJ_MAX_NEIGHBORS,
+        h_neighbor_overflow ? "YES" : "no"
+    );
+
+    if (h_neighbor_overflow) {
+        fprintf(
+            stderr,
+            "Warning: neighbor list overflow. Increase LJ_MAX_NEIGHBORS. Current LJ_MAX_NEIGHBORS=%d true_max_neighbors=%d\n",
+            LJ_MAX_NEIGHBORS,
+            h_max_neighbors_seen
+        );
+    }
+#else
+    int h_neighbor_overflow = 0;
+
+    checkCudaErrors(cudaMemcpy(
+        &h_neighbor_overflow,
+        d_neighbor_overflow,
+        sizeof(int),
+        cudaMemcpyDeviceToHost
+    ));
+
+    if (h_neighbor_overflow) {
+        fprintf(
+            stderr,
+            "Warning: neighbor list overflow. Increase LJ_MAX_NEIGHBORS. Current LJ_MAX_NEIGHBORS=%d\n",
+            LJ_MAX_NEIGHBORS
+        );
+    }
+#endif
 }
 
 double compute_forces_verlet_cuda(
@@ -1080,7 +1024,7 @@ double compute_forces_verlet_cuda(
     real *__restrict__ d_fz_arr,
     unsigned int n,
     int *&d_particle_cell_indices,
-    int *__restrict__ d_particle_ids,
+    int *&d_particle_ids,
     int *__restrict__ d_cell_start,
     int *__restrict__ d_next_pos,
     real *&d_temp_x,
@@ -1089,12 +1033,15 @@ double compute_forces_verlet_cuda(
     real *&d_temp_vx,
     real *&d_temp_vy,
     real *&d_temp_vz,
+    int *&d_temp_particle_ids,
     int *&d_temp_particle_cell_indices,
     int *__restrict__ d_needs_rebuild,
     int *__restrict__ h_needs_rebuild,
     const int *__restrict__ d_cell_neighbors,
     int *__restrict__ d_neighbor_counts,
+    int *__restrict__ d_neighbor_total_counts,
     int *__restrict__ d_neighbor_list,
+    int *__restrict__ d_neighbor_overflow,
     int num_cells,
     float r_skin,
     real *__restrict__ d_pe_partial,
@@ -1104,11 +1051,8 @@ double compute_forces_verlet_cuda(
     int rebuild_block_size,
     int update_velocity_second_half
 ) {
-    /*
-        d_needs_rebuild points to mapped pinned host memory.
-        Synchronize before reading the host-side flag so that any previous
-        kernel writes with atomicExch(needs_rebuild, 1) are visible to CPU.
-    */
+    (void)d_needs_rebuild;
+
     checkCudaErrors(cudaDeviceSynchronize());
 
     if (*h_needs_rebuild) {
@@ -1130,6 +1074,7 @@ double compute_forces_verlet_cuda(
             d_temp_vx,
             d_temp_vy,
             d_temp_vz,
+            d_temp_particle_ids,
             d_temp_particle_cell_indices,
             num_cells,
             rebuild_block_size
@@ -1143,7 +1088,9 @@ double compute_forces_verlet_cuda(
             d_cell_start,
             d_cell_neighbors,
             d_neighbor_counts,
+            d_neighbor_total_counts,
             d_neighbor_list,
+            d_neighbor_overflow,
             n,
             r_skin,
             rebuild_block_size
@@ -1259,12 +1206,10 @@ static SimulationResult run_simulation_cuda_internal(
     real *h_vx = (real *)checked_malloc((size_t)n * sizeof(real), "h_vx");
     real *h_vy = (real *)checked_malloc((size_t)n * sizeof(real), "h_vy");
     real *h_vz = (real *)checked_malloc((size_t)n * sizeof(real), "h_vz");
-
-#if LJ_COPY_BACK_PARTICLES
     real *h_fx = (real *)checked_malloc((size_t)n * sizeof(real), "h_fx");
     real *h_fy = (real *)checked_malloc((size_t)n * sizeof(real), "h_fy");
     real *h_fz = (real *)checked_malloc((size_t)n * sizeof(real), "h_fz");
-#endif
+    int *h_particle_ids = (int *)checked_malloc((size_t)n * sizeof(int), "h_particle_ids");
 
     for (unsigned int i = 0; i < n; ++i) {
         h_x[i] = REAL_C(particles[i].x);
@@ -1274,6 +1219,8 @@ static SimulationResult run_simulation_cuda_internal(
         h_vx[i] = REAL_C(particles[i].vx);
         h_vy[i] = REAL_C(particles[i].vy);
         h_vz[i] = REAL_C(particles[i].vz);
+
+        h_particle_ids[i] = (int)i;
     }
 
     const constants3d h_c = make_constants(box_size, r_skin, n);
@@ -1321,6 +1268,7 @@ static SimulationResult run_simulation_cuda_internal(
 
     int *d_particle_cell_indices = NULL;
     int *d_particle_ids = NULL;
+    int *d_temp_particle_ids = NULL;
     int *d_cell_start = NULL;
     int *d_next_pos = NULL;
     int *d_temp_particle_cell_indices = NULL;
@@ -1329,7 +1277,9 @@ static SimulationResult run_simulation_cuda_internal(
     int *d_cell_neighbors = NULL;
 
     int *d_neighbor_counts = NULL;
+    int *d_neighbor_total_counts = NULL;
     int *d_neighbor_list = NULL;
+    int *d_neighbor_overflow = NULL;
 
     checkCudaErrors(cudaMalloc((void **)&d_x_arr, (size_t)n * sizeof(real)));
     checkCudaErrors(cudaMalloc((void **)&d_y_arr, (size_t)n * sizeof(real)));
@@ -1350,6 +1300,7 @@ static SimulationResult run_simulation_cuda_internal(
 
     checkCudaErrors(cudaMalloc((void **)&d_particle_cell_indices, (size_t)n * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_particle_ids, (size_t)n * sizeof(int)));
+    checkCudaErrors(cudaMalloc((void **)&d_temp_particle_ids, (size_t)n * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_cell_start, (size_t)(num_cells + 1) * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_next_pos, (size_t)num_cells * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_temp_particle_cell_indices, (size_t)n * sizeof(int)));
@@ -1367,10 +1318,14 @@ static SimulationResult run_simulation_cuda_internal(
     ));
 
     checkCudaErrors(cudaMalloc((void **)&d_neighbor_counts, (size_t)n * sizeof(int)));
+    checkCudaErrors(cudaMalloc((void **)&d_neighbor_total_counts, (size_t)n * sizeof(int)));
+
     checkCudaErrors(cudaMalloc(
         (void **)&d_neighbor_list,
         (size_t)n * (size_t)max_neighbors * sizeof(int)
     ));
+
+    checkCudaErrors(cudaMalloc((void **)&d_neighbor_overflow, sizeof(int)));
 
     checkCudaErrors(cudaMalloc((void **)&d_ke_partial, (size_t)num_ke_blocks * sizeof(real)));
     checkCudaErrors(cudaMalloc((void **)&d_pe_partial, (size_t)force_blocks * sizeof(real)));
@@ -1381,6 +1336,7 @@ static SimulationResult run_simulation_cuda_internal(
     checkCudaErrors(cudaMemcpy(d_vx_arr, h_vx, (size_t)n * sizeof(real), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_vy_arr, h_vy, (size_t)n * sizeof(real), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_vz_arr, h_vz, (size_t)n * sizeof(real), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_particle_ids, h_particle_ids, (size_t)n * sizeof(int), cudaMemcpyHostToDevice));
 
     checkCudaErrors(cudaMemset(d_fx_arr, 0, (size_t)n * sizeof(real)));
     checkCudaErrors(cudaMemset(d_fy_arr, 0, (size_t)n * sizeof(real)));
@@ -1435,12 +1391,15 @@ static SimulationResult run_simulation_cuda_internal(
         d_temp_vx,
         d_temp_vy,
         d_temp_vz,
+        d_temp_particle_ids,
         d_temp_particle_cell_indices,
         d_needs_rebuild,
         h_needs_rebuild,
         d_cell_neighbors,
         d_neighbor_counts,
+        d_neighbor_total_counts,
         d_neighbor_list,
+        d_neighbor_overflow,
         num_cells,
         r_skin,
         d_pe_partial,
@@ -1509,12 +1468,15 @@ static SimulationResult run_simulation_cuda_internal(
             d_temp_vx,
             d_temp_vy,
             d_temp_vz,
+            d_temp_particle_ids,
             d_temp_particle_cell_indices,
             d_needs_rebuild,
             h_needs_rebuild,
             d_cell_neighbors,
             d_neighbor_counts,
+            d_neighbor_total_counts,
             d_neighbor_list,
+            d_neighbor_overflow,
             num_cells,
             r_skin,
             d_pe_partial,
@@ -1524,7 +1486,6 @@ static SimulationResult run_simulation_cuda_internal(
             rebuild_block_size,
             1
         );
-
 
         if (should_log) {
             out.final_potential = step_potential;
@@ -1553,34 +1514,97 @@ static SimulationResult run_simulation_cuda_internal(
         }
     }
 
-#if LJ_COPY_BACK_PARTICLES
-    checkCudaErrors(cudaMemcpy(h_x, d_x_arr, (size_t)n * sizeof(real), cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(h_y, d_y_arr, (size_t)n * sizeof(real), cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(h_z, d_z_arr, (size_t)n * sizeof(real), cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(h_vx, d_vx_arr, (size_t)n * sizeof(real), cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(h_vy, d_vy_arr, (size_t)n * sizeof(real), cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(h_vz, d_vz_arr, (size_t)n * sizeof(real), cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(h_fx, d_fx_arr, (size_t)n * sizeof(real), cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(h_fy, d_fy_arr, (size_t)n * sizeof(real), cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(h_fz, d_fz_arr, (size_t)n * sizeof(real), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(
+        h_x,
+        d_x_arr,
+        (size_t)n * sizeof(real),
+        cudaMemcpyDeviceToHost
+    ));
+
+    checkCudaErrors(cudaMemcpy(
+        h_y,
+        d_y_arr,
+        (size_t)n * sizeof(real),
+        cudaMemcpyDeviceToHost
+    ));
+
+    checkCudaErrors(cudaMemcpy(
+        h_z,
+        d_z_arr,
+        (size_t)n * sizeof(real),
+        cudaMemcpyDeviceToHost
+    ));
+
+    checkCudaErrors(cudaMemcpy(
+        h_vx,
+        d_vx_arr,
+        (size_t)n * sizeof(real),
+        cudaMemcpyDeviceToHost
+    ));
+
+    checkCudaErrors(cudaMemcpy(
+        h_vy,
+        d_vy_arr,
+        (size_t)n * sizeof(real),
+        cudaMemcpyDeviceToHost
+    ));
+
+    checkCudaErrors(cudaMemcpy(
+        h_vz,
+        d_vz_arr,
+        (size_t)n * sizeof(real),
+        cudaMemcpyDeviceToHost
+    ));
+
+    checkCudaErrors(cudaMemcpy(
+        h_fx,
+        d_fx_arr,
+        (size_t)n * sizeof(real),
+        cudaMemcpyDeviceToHost
+    ));
+
+    checkCudaErrors(cudaMemcpy(
+        h_fy,
+        d_fy_arr,
+        (size_t)n * sizeof(real),
+        cudaMemcpyDeviceToHost
+    ));
+
+    checkCudaErrors(cudaMemcpy(
+        h_fz,
+        d_fz_arr,
+        (size_t)n * sizeof(real),
+        cudaMemcpyDeviceToHost
+    ));
+
+    checkCudaErrors(cudaMemcpy(
+        h_particle_ids,
+        d_particle_ids,
+        (size_t)n * sizeof(int),
+        cudaMemcpyDeviceToHost
+    ));
 
     for (unsigned int i = 0; i < n; ++i) {
-        particles[i].id = i;
+        int id = h_particle_ids[i];
 
-        particles[i].x = h_x[i];
-        particles[i].y = h_y[i];
-        particles[i].z = h_z[i];
+        if (id < 0 || id >= (int)n) {
+            id = (int)i;
+        }
 
-        particles[i].vx = h_vx[i];
-        particles[i].vy = h_vy[i];
-        particles[i].vz = h_vz[i];
+        particles[id].id = (unsigned int)id;
 
-        particles[i].fx = h_fx[i];
-        particles[i].fy = h_fy[i];
-        particles[i].fz = h_fz[i];
+        particles[id].x = (double)h_x[i];
+        particles[id].y = (double)h_y[i];
+        particles[id].z = (double)h_z[i];
+
+        particles[id].vx = (double)h_vx[i];
+        particles[id].vy = (double)h_vy[i];
+        particles[id].vz = (double)h_vz[i];
+
+        particles[id].fx = (double)h_fx[i];
+        particles[id].fy = (double)h_fy[i];
+        particles[id].fz = (double)h_fz[i];
     }
-
-#endif
 
     checkCudaErrors(cudaFree(d_x_arr));
     checkCudaErrors(cudaFree(d_y_arr));
@@ -1601,6 +1625,7 @@ static SimulationResult run_simulation_cuda_internal(
 
     checkCudaErrors(cudaFree(d_particle_cell_indices));
     checkCudaErrors(cudaFree(d_particle_ids));
+    checkCudaErrors(cudaFree(d_temp_particle_ids));
     checkCudaErrors(cudaFree(d_cell_start));
     checkCudaErrors(cudaFree(d_next_pos));
     checkCudaErrors(cudaFree(d_temp_particle_cell_indices));
@@ -1609,7 +1634,9 @@ static SimulationResult run_simulation_cuda_internal(
     checkCudaErrors(cudaFree(d_cell_neighbors));
 
     checkCudaErrors(cudaFree(d_neighbor_counts));
+    checkCudaErrors(cudaFree(d_neighbor_total_counts));
     checkCudaErrors(cudaFree(d_neighbor_list));
+    checkCudaErrors(cudaFree(d_neighbor_overflow));
 
     checkCudaErrors(cudaFree(d_ke_partial));
     checkCudaErrors(cudaFree(d_pe_partial));
@@ -1620,12 +1647,10 @@ static SimulationResult run_simulation_cuda_internal(
     free(h_vx);
     free(h_vy);
     free(h_vz);
-
-#if LJ_COPY_BACK_PARTICLES
     free(h_fx);
     free(h_fy);
     free(h_fz);
-#endif
+    free(h_particle_ids);
 
     out.n = n;
     out.particles = particles;
@@ -1682,12 +1707,14 @@ SimulationResult run_simulation(
     if (getenv("LJ_PRINT_PARAMS") != NULL) {
         fprintf(
             stderr,
-            "3D CUDA params: r_skin=%.4f force_block=%d ke_block=%d update_block=%d rebuild_block=%d\n",
+            "3D CUDA params: r_skin=%.4f force_block=%d ke_block=%d update_block=%d rebuild=%d max_neighbors=%d log_max_neighbors=%d\n",
             r_skin,
             force_block_size,
             ke_block_size,
             update_block_size,
-            rebuild_block_size
+            rebuild_block_size,
+            LJ_MAX_NEIGHBORS,
+            LJ_LOG_MAX_NEIGHBORS
         );
     }
 
