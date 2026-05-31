@@ -2,295 +2,215 @@
 
 #SBATCH --reservation=fri
 #SBATCH --partition=gpu
-#SBATCH --job-name=lennard-jones
+#SBATCH --job-name=lj-force-omp-graphs
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --gpus-per-node=2
+#SBATCH --gpus=1
 #SBATCH --nodes=1
-#SBATCH --output=lj_out.log
+#SBATCH --output=logs/%x-%j.out
 
-# LOAD MODULES
+set -u
+
 module load CUDA
 
-# FOLDERS
-mkdir -p results
-mkdir -p results/raw
+mkdir -p logs results/raw
 
-# BUILD
-make
+RUNS=10
 
-# RUN SETTINGS
-EXEC="./lj.out"
+# Six benchmark-like cases: three below 50k, three above 50k, max 100k.
+# Adjust nsteps here if your final benchmark uses different step counts.
+CONFIGS=(
+    "10000 5000"
+    "50000 5000"
+    "75000 5000"
+    "80000 5000"
+    "90000 5000"
+    "100000 5000"
+)
 
-N_VALUES="1000 2000 4000 8000 16000 20000"
-NSTEPS_VALUES="1000 2000 5000 10000"
-R_SKIN_VALUES="0.2 0.4 0.6 0.8 1.0"
+# Force block sizes must stay powers of two because the code sanitizes block sizes.
+FORCE_BLOCKS=(256)
+OPENMP_MODES=(0)
+CUDA_GRAPH_MODES=(1)
 
-# Separate CUDA block-size sweeps
-FORCE_BLOCK_SIZES="32 64 128 256 512 1024"
-KE_BLOCK_SIZES="32 64 128 256 512 1024"
-UPDATE_BLOCK_SIZES="32 64 128 256 512 1024"
-REBUILD_BLOCK_SIZES="32 64 128 256 512 1024"
+# Keep these fixed during this sweep so the result isolates force block / OpenMP / graphs.
+R_SKIN=0.3
+LJ_MAX_NEIGHBORS=128
+LJ_REBUILD_INTERVAL=30
+LJ_DYNAMIC_REBUILD=0
 
-RUNS=5
-WARMUP_RUNS=5
+OUT_RUNS="results/force_openmp_graphs_runs.csv"
+OUT_SUMMARY="results/force_openmp_graphs_summary.csv"
 
-JOB_ID="${SLURM_JOB_ID:-local}"
-OUT="results/lj3d_sweep_${JOB_ID}.csv"
-AVG_OUT="results/lj3d_sweep_${JOB_ID}_avg.csv"
+printf "n,nsteps,force_block,openmp,cuda_graphs,run,time_s,change,status,raw_log\n" > "$OUT_RUNS"
 
-# WARMUP RUNS
-# These are not included in the CSV results.
-WARMUP_N="$(echo "$N_VALUES" | awk '{ print $1 }')"
-WARMUP_NSTEPS="$(echo "$NSTEPS_VALUES" | awk '{ print $1 }')"
-WARMUP_R_SKIN="$(echo "$R_SKIN_VALUES" | awk '{ print $1 }')"
-WARMUP_FORCE_BLOCK="$(echo "$FORCE_BLOCK_SIZES" | awk '{ print $1 }')"
-WARMUP_KE_BLOCK="$(echo "$KE_BLOCK_SIZES" | awk '{ print $1 }')"
-WARMUP_UPDATE_BLOCK="$(echo "$UPDATE_BLOCK_SIZES" | awk '{ print $1 }')"
-WARMUP_REBUILD_BLOCK="$(echo "$REBUILD_BLOCK_SIZES" | awk '{ print $1 }')"
+BASE_NVCC_FLAGS="-Wno-deprecated-gpu-targets -gencode=arch=compute_70,code=sm_70 -O3 --use_fast_math -Xcompiler=-fopenmp,-Wall"
 
-export LJ_R_SKIN="$WARMUP_R_SKIN"
-export LJ_FORCE_BLOCK_SIZE="$WARMUP_FORCE_BLOCK"
-export LJ_KE_BLOCK_SIZE="$WARMUP_KE_BLOCK"
-export LJ_UPDATE_BLOCK_SIZE="$WARMUP_UPDATE_BLOCK"
-export LJ_REBUILD_BLOCK_SIZE="$WARMUP_REBUILD_BLOCK"
+compile_variant() {
+    local force_block="$1"
+    local use_openmp="$2"
+    local use_graphs="$3"
 
-echo "===== Warmup runs ====="
-for warmup in $(seq 1 "$WARMUP_RUNS"); do
-    warmup_log="results/raw/warmup_${JOB_ID}_run${warmup}.log"
+    local host_flags
+    local omp_threads
 
-    echo "Warmup $warmup/$WARMUP_RUNS: n=$WARMUP_N nsteps=$WARMUP_NSTEPS r_skin=$WARMUP_R_SKIN force=$WARMUP_FORCE_BLOCK ke=$WARMUP_KE_BLOCK update=$WARMUP_UPDATE_BLOCK rebuild=$WARMUP_REBUILD_BLOCK"
+    if [[ "$use_openmp" == "1" ]]; then
+        host_flags="-Xcompiler=-fopenmp,-Wall"
+        omp_threads="$SLURM_CPUS_PER_TASK"
+    else
+        host_flags="-Xcompiler=-Wall"
+        omp_threads="1"
+    fi
 
-    srun "$EXEC" "$WARMUP_N" "$WARMUP_NSTEPS" > "$warmup_log" 2>&1
-done
+    local defs="-DFORCE_BLOCK_SIZE=${force_block}"
+    defs+=" -DLJ_USE_OPENMP=${use_openmp}"
+    defs+=" -DLJ_USE_CUDA_GRAPHS=${use_graphs}"
+    defs+=" -DLJ_USE_DYNAMIC_REBUILD=${LJ_DYNAMIC_REBUILD}"
+    defs+=" -DR_SKIN=${R_SKIN}f"
+    defs+=" -DLJ_MAX_NEIGHBORS=${LJ_MAX_NEIGHBORS}"
+    defs+=" -DLJ_REBUILD_INTERVAL=${LJ_REBUILD_INTERVAL}"
+    defs+=" -DLJ_LOG_MAX_NEIGHBORS=0"
 
-echo
-echo "===== Starting measured sweep ====="
+    echo "===== Building force_block=${force_block} openmp=${use_openmp} cuda_graphs=${use_graphs} ====="
+    make clean >/dev/null 2>&1 || true
+    make CFLAGS="${BASE_NVCC_FLAGS} ${host_flags} ${defs}"
 
-echo "n,nsteps,r_skin,force_block,ke_block,update_block,rebuild_block,run,time_s,status,start_total,final_total,abs_delta,rel_delta,raw_log" > "$OUT"
+}
 
-for n in $N_VALUES; do
-    for nsteps in $NSTEPS_VALUES; do
-        for r_skin in $R_SKIN_VALUES; do
-            for force_block in $FORCE_BLOCK_SIZES; do
-                for ke_block in $KE_BLOCK_SIZES; do
-                    for update_block in $UPDATE_BLOCK_SIZES; do
-                        for rebuild_block in $REBUILD_BLOCK_SIZES; do
-                            for run in $(seq 1 "$RUNS"); do
+run_one() {
+    local n="$1"
+    local nsteps="$2"
+    local force_block="$3"
+    local use_openmp="$4"
+    local use_graphs="$5"
+    local run="$6"
 
-                                export LJ_R_SKIN="$r_skin"
+    local raw="results/raw/n${n}_steps${nsteps}_fb${force_block}_omp${use_openmp}_graphs${use_graphs}_run${run}.log"
 
-                                export LJ_FORCE_BLOCK_SIZE="$force_block"
-                                export LJ_KE_BLOCK_SIZE="$ke_block"
-                                export LJ_UPDATE_BLOCK_SIZE="$update_block"
-                                export LJ_REBUILD_BLOCK_SIZE="$rebuild_block"
+    echo "Running n=${n} nsteps=${nsteps} force_block=${force_block} openmp=${use_openmp} cuda_graphs=${use_graphs} run=${run}/${RUNS}"
 
-                                raw_log="results/raw/n${n}_steps${nsteps}_skin${r_skin}_force${force_block}_ke${ke_block}_update${update_block}_rebuild${rebuild_block}_run${run}.log"
+    set +e
+    LJ_PRINT_PARAMS=1 /usr/bin/time -f "WALL_TIME %e" srun ./lj.out "$n" "$nsteps" > "$raw" 2>&1
+    local rc=$?
+    set -e
 
-                                echo "===== n=$n nsteps=$nsteps r_skin=$r_skin force=$force_block ke=$ke_block update=$update_block rebuild=$rebuild_block run=$run/$RUNS ====="
+    local time_s
+    time_s=$(awk '
+        /Simulation time[[:space:]]+[0-9]+[[:space:]]+steps:/ {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "seconds") {
+                    value = $(i - 1)
+                }
+            }
+        }
+        /Execution time:/ {
+            value = $NF
+        }
+        END {
+            if (value != "") print value
+        }
+    ' "$raw")
 
-                                srun "$EXEC" "$n" "$nsteps" > "$raw_log" 2>&1
-                                status=$?
+    # Fallback only: this is total process wall time, not the program-reported simulation time.
+    if [[ -z "$time_s" ]]; then
+        time_s=$(awk '
+            /WALL_TIME/ {
+                value = $2
+            }
+            END {
+                if (value != "") print value
+            }
+        ' "$raw")
+    fi
 
-                                # Example:
-                                # Simulation time 1000 steps: 0.242 seconds
-                                time_s="$(
-                                    awk '
-                                        BEGIN { val = "" }
+    local change
+    change=$(awk '
+        /^Change / {
+            value = $2
+        }
+        END {
+            if (value != "") print value
+        }
+    ' "$raw")
 
-                                        /Simulation time/ || /Execution time/ || /execution time/ || /Elapsed time/ || /elapsed time/ {
-                                            for (i = 1; i <= NF; i++) {
-                                                if ($i ~ /^[-+]?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$/) {
-                                                    val = $i
-                                                }
-                                            }
-                                        }
+    local status="ok"
 
-                                        END {
-                                            print val
-                                        }
-                                    ' "$raw_log"
-                                )"
+    if [[ "$rc" -ne 0 ]]; then
+        status="error"
+    fi
 
-                                # Parse starting total energy if the program prints it.
-                                # Supported examples:
-                                # Initial E: -3325.3988
-                                # Start E:   -3325.3988
-                                # start_total -3325.3988
-                                start_total="$(
-                                    awk '
-                                        BEGIN { val = "" }
+    if grep -qi "neighbor list overflow" "$raw"; then
+        status="overflow"
+    fi
 
-                                        /start_total/ || /start total/ || /Start total/ || /initial total/ || /Initial total/ || /Initial E:/ || /initial E:/ || /Start E:/ || /start E:/ {
-                                            for (i = 1; i <= NF; i++) {
-                                                if ($i ~ /^[-+]?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$/) {
-                                                    val = $i
-                                                    break
-                                                }
-                                            }
-                                        }
+    if [[ -z "$time_s" ]]; then
+        status="missing_time"
+    fi
 
-                                        END {
-                                            print val
-                                        }
-                                    ' "$raw_log"
-                                )"
+    if [[ -z "$change" ]]; then
+        change="nan"
+    fi
 
-                                # Parse final total energy.
-                                # Example:
-                                # Final E:  -3325.4318 | delta: -0.0330
-                                final_total="$(
-                                    awk '
-                                        BEGIN { val = "" }
+    printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" \
+        "$n" "$nsteps" "$force_block" "$use_openmp" "$use_graphs" "$run" \
+        "$time_s" "$change" "$status" "$raw" >> "$OUT_RUNS"
+}
 
-                                        /final_total/ || /final total/ || /Final total/ || /Final E:/ || /final E:/ {
-                                            for (i = 1; i <= NF; i++) {
-                                                if ($i ~ /^[-+]?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$/) {
-                                                    val = $i
-                                                    break
-                                                }
-                                            }
-                                        }
+set -e
 
-                                        END {
-                                            print val
-                                        }
-                                    ' "$raw_log"
-                                )"
+for force_block in "${FORCE_BLOCKS[@]}"; do
+    for use_openmp in "${OPENMP_MODES[@]}"; do
+        for use_graphs in "${CUDA_GRAPH_MODES[@]}"; do
+            compile_variant "$force_block" "$use_openmp" "$use_graphs"
 
-                                # Parse energy delta from Final E line if available.
-                                # Example:
-                                # Final E:  -3325.4318 | delta: -0.0330
-                                energy_delta="$(
-                                    awk '
-                                        BEGIN { val = "" }
+            for cfg in "${CONFIGS[@]}"; do
+                read -r n nsteps <<< "$cfg"
 
-                                        /Final E:/ || /final E:/ {
-                                            for (i = 1; i <= NF; i++) {
-                                                if ($i == "delta:" && (i + 1) <= NF) {
-                                                    val = $(i + 1)
-                                                }
-                                            }
-                                        }
-
-                                        END {
-                                            print val
-                                        }
-                                    ' "$raw_log"
-                                )"
-
-                                # If start_total was not printed, reconstruct it:
-                                # delta = final - start  =>  start = final - delta
-                                if [[ -z "$start_total" && -n "$final_total" && -n "$energy_delta" ]]; then
-                                    start_total="$(
-                                        awk -v f="$final_total" -v d="$energy_delta" '
-                                            BEGIN {
-                                                printf "%.4f", f - d
-                                            }
-                                        '
-                                    )"
-                                fi
-
-                                abs_delta=""
-                                rel_delta=""
-
-                                if [[ -n "$start_total" && -n "$final_total" ]]; then
-                                    read -r abs_delta rel_delta < <(
-                                        awk -v s="$start_total" -v f="$final_total" '
-                                            BEGIN {
-                                                abs = f - s
-                                                denom = s
-
-                                                if (denom < 0) {
-                                                    denom = -denom
-                                                }
-
-                                                if (denom > 1e-12) {
-                                                    rel = abs / denom
-                                                } else {
-                                                    rel = 0.0
-                                                }
-
-                                                printf "%.12g %.12g\n", abs, rel
-                                            }
-                                        '
-                                    )
-                                fi
-
-                                echo "$n,$nsteps,$r_skin,$force_block,$ke_block,$update_block,$rebuild_block,$run,$time_s,$status,$start_total,$final_total,$abs_delta,$rel_delta,$raw_log" >> "$OUT"
-
-                            done
-                        done
-                    done
+                for run in $(seq 1 "$RUNS"); do
+                    run_one "$n" "$nsteps" "$force_block" "$use_openmp" "$use_graphs" "$run"
                 done
             done
         done
     done
 done
 
-echo "n,nsteps,r_skin,force_block,ke_block,update_block,rebuild_block,runs,avg_time_s,min_time_s,max_time_s,avg_abs_delta,avg_rel_delta" > "$AVG_OUT"
-
 awk -F, '
-    NR > 1 && $10 == 0 && $9 != "" {
-        key = $1 "," $2 "," $3 "," $4 "," $5 "," $6 "," $7
+BEGIN {
+    OFS = ",";
+    print "n,nsteps,force_block,openmp,cuda_graphs,runs,avg_time_s,min_time_s,max_time_s,avg_change,status";
+}
+NR > 1 {
+    key = $1 OFS $2 OFS $3 OFS $4 OFS $5;
+    seen[key] = 1;
 
-        count[key]++
-        time_sum[key] += $9
+    if ($9 == "ok") {
+        runs[key]++;
+        sum_time[key] += $7;
+        sum_change[key] += $8;
 
-        if (!(key in min_time) || $9 < min_time[key]) {
-            min_time[key] = $9
+        if (!(key in min_time) || $7 < min_time[key]) {
+            min_time[key] = $7;
         }
 
-        if (!(key in max_time) || $9 > max_time[key]) {
-            max_time[key] = $9
+        if (!(key in max_time) || $7 > max_time[key]) {
+            max_time[key] = $7;
         }
-
-        if ($13 != "") {
-            abs_sum[key] += $13
-            abs_count[key]++
-        }
-
-        if ($14 != "") {
-            rel_sum[key] += $14
-            rel_count[key]++
+    } else {
+        bad[key] = 1;
+    }
+}
+END {
+    for (key in seen) {
+        if (runs[key] > 0) {
+            status = bad[key] ? "partial" : "ok";
+            print key, runs[key], sum_time[key] / runs[key], min_time[key], max_time[key], sum_change[key] / runs[key], status;
+        } else {
+            print key, 0, "", "", "", "", "failed";
         }
     }
+}
+' "$OUT_RUNS" | sort -t, -k1,1n -k2,2n -k3,3n -k4,4n -k5,5n > "$OUT_SUMMARY"
 
-    END {
-        for (key in count) {
-            avg_time = time_sum[key] / count[key]
-
-            avg_abs = ""
-            avg_rel = ""
-
-            if (abs_count[key] > 0) {
-                avg_abs = abs_sum[key] / abs_count[key]
-            }
-
-            if (rel_count[key] > 0) {
-                avg_rel = rel_sum[key] / rel_count[key]
-            }
-
-            printf "%s,%d,%.3f,%.3f,%.3f", key, count[key], avg_time, min_time[key], max_time[key]
-
-            if (avg_abs != "") {
-                printf ",%.12g", avg_abs
-            } else {
-                printf ","
-            }
-
-            if (avg_rel != "") {
-                printf ",%.12g", avg_rel
-            } else {
-                printf ","
-            }
-
-            printf "\n"
-        }
-    }
-' "$OUT" | sort -t, -k1,1n -k2,2n -k3,3n -k4,4n -k5,5n -k6,6n -k7,7n >> "$AVG_OUT"
-
-echo
 echo "Done."
-echo "Raw results:     $OUT"
-echo "Average results: $AVG_OUT"
+echo "Run CSV:     $OUT_RUNS"
+echo "Summary CSV: $OUT_SUMMARY"

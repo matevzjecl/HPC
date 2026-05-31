@@ -61,6 +61,20 @@ typedef float real;
 #define LJ_USE_DYNAMIC_REBUILD 0
 #endif
 
+#ifndef LJ_USE_OPENMP
+#define LJ_USE_OPENMP 0
+#endif
+
+#ifndef LJ_OPENMP_MIN_N
+#define LJ_OPENMP_MIN_N 10000u
+#endif
+
+#if LJ_USE_OPENMP
+#define LJ_OMP_PARALLEL_FOR_IF_ENABLED _Pragma("omp parallel for schedule(runtime) if(use_openmp)")
+#else
+#define LJ_OMP_PARALLEL_FOR_IF_ENABLED
+#endif
+
 #define R_CUT_REAL REAL_C(R_CUT)
 #define SIGMA_REAL REAL_C(SIGMA)
 #define EPSILON_REAL REAL_C(EPSILON)
@@ -226,9 +240,16 @@ static void enable_mapped_host_memory(void) {
 }
 #endif
 
-int initialize_particles(Particle *particles, unsigned int n, double box_size, double placement_fraction, unsigned int seed, double temperature) {
-    
+int initialize_particles(
+    Particle *particles,
+    unsigned int n,
+    double box_size,
+    double placement_fraction,
+    unsigned int seed,
+    double temperature
+) {
     srand(seed);
+
     unsigned int n_side = (unsigned int)ceil(cbrt((double)n));
     double placement_size = placement_fraction * box_size;
     double offset = 0.5 * (box_size - placement_size);
@@ -237,9 +258,10 @@ int initialize_particles(Particle *particles, unsigned int n, double box_size, d
     double mean_vx = 0.0;
     double mean_vy = 0.0;
     double mean_vz = 0.0;
-    // place particles int he middle of the grid with some random jitter and assign random velocities
+
     for (unsigned int k = 0; k < n; k++) {
         particles[k].id = k;
+
         unsigned int ix = k % n_side;
         unsigned int iy = (k / n_side) % n_side;
         unsigned int iz = k / (n_side * n_side);
@@ -255,7 +277,7 @@ int initialize_particles(Particle *particles, unsigned int n, double box_size, d
         particles[k].vx = 2.0 * random_double() - 1.0;
         particles[k].vy = 2.0 * random_double() - 1.0;
         particles[k].vz = 2.0 * random_double() - 1.0;
-        
+
         mean_vx += particles[k].vx;
         mean_vy += particles[k].vy;
         mean_vz += particles[k].vz;
@@ -264,12 +286,14 @@ int initialize_particles(Particle *particles, unsigned int n, double box_size, d
     mean_vx /= (double)n;
     mean_vy /= (double)n;
     mean_vz /= (double)n;
+
     double ke = 0.0;
-    // subtract mean velocity to ensure zero net momentum and compute initial kinetic energy
+
     for (unsigned int k = 0; k < n; k++) {
         particles[k].vx -= mean_vx;
         particles[k].vy -= mean_vy;
         particles[k].vz -= mean_vz;
+
         ke += 0.5 * (
             particles[k].vx * particles[k].vx +
             particles[k].vy * particles[k].vy +
@@ -278,12 +302,13 @@ int initialize_particles(Particle *particles, unsigned int n, double box_size, d
     }
 
     double current_temperature = ke / (double)n;
+
     if (current_temperature <= 0.0) {
         return 0;
     }
 
-    // scale velocities to match the desired initial temperature of the system
     double scale = sqrt(temperature / current_temperature);
+
     for (unsigned int k = 0; k < n; k++) {
         particles[k].vx *= scale;
         particles[k].vy *= scale;
@@ -904,12 +929,17 @@ static void launch_no_rebuild_step_graph(NoRebuildStepGraph *g) {
 
 void build_cell_neighbors_full(
     int *__restrict__ cell_neighbors,
-    const constants3d *__restrict__ c
+    const constants3d *__restrict__ c,
+    unsigned int n
 ) {
     const int num_cells = c->num_cells;
     const int num_cells_x = c->num_cells_x;
     const int num_cells_y = c->num_cells_y;
     const int num_cells_z = c->num_cells_z;
+    const int use_openmp = (n >= (unsigned int)LJ_OPENMP_MIN_N);
+    (void)use_openmp;
+
+    LJ_OMP_PARALLEL_FOR_IF_ENABLED
     for (int cell = 0; cell < num_cells; ++cell) {
         const int cx = cell % num_cells_x;
         const int cy = (cell / num_cells_x) % num_cells_y;
@@ -1479,6 +1509,10 @@ static SimulationResult run_simulation_cuda_internal(
     real *h_fy = (real *)checked_malloc((size_t)n * sizeof(real), "h_fy");
     real *h_fz = (real *)checked_malloc((size_t)n * sizeof(real), "h_fz");
     int *h_particle_ids = (int *)checked_malloc((size_t)n * sizeof(int), "h_particle_ids");
+    const int use_openmp = (n >= (unsigned int)LJ_OPENMP_MIN_N);
+    (void)use_openmp;
+
+    LJ_OMP_PARALLEL_FOR_IF_ENABLED
     for (unsigned int i = 0; i < n; ++i) {
         h_x[i] = REAL_C(particles[i].x);
         h_y[i] = REAL_C(particles[i].y);
@@ -1626,7 +1660,7 @@ static SimulationResult run_simulation_cuda_internal(
         exit(EXIT_FAILURE);
     }
 
-    build_cell_neighbors_full(cell_neighbors, &h_c);
+    build_cell_neighbors_full(cell_neighbors, &h_c, n);
 
     checkCudaErrors(cudaMalloc(
         (void **)&d_cell_neighbors,
@@ -2072,6 +2106,7 @@ static SimulationResult run_simulation_cuda_internal(
         cudaMemcpyDeviceToHost
     ));
 
+    LJ_OMP_PARALLEL_FOR_IF_ENABLED
     for (unsigned int i = 0; i < n; ++i) {
         int id = h_particle_ids[i];
 
@@ -2200,7 +2235,7 @@ SimulationResult run_simulation(
     if (getenv("LJ_PRINT_PARAMS") != NULL) {
         fprintf(
             stderr,
-            "3D CUDA params: r_skin=%.4f force_block=%d ke_block=%d update_block=%d rebuild=%d max_neighbors=%d log_max_neighbors=%d rebuild_interval=%d cuda_graphs=%d dynamic_rebuild=%d\n",
+            "3D CUDA params: r_skin=%.4f force_block=%d ke_block=%d update_block=%d rebuild=%d max_neighbors=%d log_max_neighbors=%d rebuild_interval=%d cuda_graphs=%d dynamic_rebuild=%d openmp=%d openmp_min_n=%u openmp_active=%d\n",
             r_skin,
             force_block_size,
             ke_block_size,
@@ -2210,7 +2245,10 @@ SimulationResult run_simulation(
             LJ_LOG_MAX_NEIGHBORS,
             LJ_REBUILD_INTERVAL,
             LJ_USE_CUDA_GRAPHS,
-            LJ_USE_DYNAMIC_REBUILD
+            LJ_USE_DYNAMIC_REBUILD,
+            LJ_USE_OPENMP,
+            (unsigned int)LJ_OPENMP_MIN_N,
+            (n >= (unsigned int)LJ_OPENMP_MIN_N)
         );
     }
 
